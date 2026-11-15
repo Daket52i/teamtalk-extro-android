@@ -1,0 +1,1446 @@
+package org.teamtalkextro.gui;
+
+import android.app.Activity;
+import com.google.android.material.color.DynamicColors;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import org.teamtalkextro.data.BearWareAccount;
+import org.teamtalkextro.data.BearWareAccountManager;
+import android.app.Fragment;
+import org.teamtalkextro.data.ServerEntry;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.graphics.Typeface;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
+import android.media.projection.MediaProjectionManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.os.PowerManager;
+import android.preference.SwitchPreference;
+import android.preference.TwoStatePreference;
+import android.preference.EditTextPreference;
+import android.preference.ListPreference;
+import android.preference.Preference;
+import android.preference.PreferenceActivity;
+import android.preference.PreferenceCategory;
+import android.preference.PreferenceFragment;
+import android.preference.PreferenceGroup;
+import android.preference.PreferenceManager;
+import android.preference.RingtonePreference;
+import android.provider.DocumentsContract;
+import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
+import android.text.TextUtils;
+import android.util.Log;
+import android.view.MenuInflater;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+import androidx.appcompat.app.AppCompatCallback;
+import androidx.appcompat.app.AppCompatDelegate;
+import dk.bearware.TeamTalkBase;
+import dk.bearware.User;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
+import org.teamtalkextro.R;
+import org.teamtalkextro.backend.TeamTalkConnection;
+import org.teamtalkextro.backend.TeamTalkConnectionListener;
+import org.teamtalkextro.backend.TeamTalkService;
+import org.teamtalkextro.data.AntiSpamStore;
+import org.teamtalkextro.data.AppInfo;
+import org.teamtalkextro.data.MicrophoneInputHelper;
+import org.teamtalkextro.data.Preferences;
+import org.teamtalkextro.data.ScreenShareAudioHelper;
+import org.teamtalkextro.data.TTSWrapper;
+import org.teamtalkextro.gui.PreferencesActivity;
+
+public class PreferencesActivity extends PreferenceActivity implements TeamTalkConnectionListener {
+    static final int ACTIVITY_REQUEST_BEARWAREID = 2;
+    public static final int REQUEST_MEDIA_PROJECTION = 2001;
+    public static final String TAG = "bearware";
+    private static String pendingInputSource = null;
+    private static final Preference.OnPreferenceChangeListener sBindPreferenceSummaryToValueListener = new Preference.OnPreferenceChangeListener() { 
+        @Override
+        public final boolean onPreferenceChange(Preference preference, Object obj) {
+            return PreferencesActivity.lambda$static$0(preference, obj);
+        }
+    };
+    private AppCompatDelegate appCompatDelegate = null;
+    TeamTalkConnection mConnection;
+
+    TeamTalkService getService() {
+        return this.mConnection != null ? this.mConnection.getService() : null;
+    }
+
+    TeamTalkBase getClient() {
+        TeamTalkService service = getService();
+        return service != null ? service.getTTInstance() : null;
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        ThemeHelper.applyTheme(this);
+        getDelegate().installViewFactory();
+        getDelegate().onCreate(savedInstanceState);
+        super.onCreate(savedInstanceState);
+        this.mConnection = new TeamTalkConnection(this);
+        EdgeToEdgeHelper.enableEdgeToEdge(this);
+    }
+
+    @Override
+    public MenuInflater getMenuInflater() {
+        return getDelegate().getMenuInflater();
+    }
+
+    @Override
+    public void setContentView(int layoutResID) {
+        getDelegate().setContentView(layoutResID);
+    }
+
+    @Override
+    public void setContentView(View view) {
+        getDelegate().setContentView(view);
+    }
+
+    @Override
+    public void setContentView(View view, ViewGroup.LayoutParams params) {
+        getDelegate().setContentView(view, params);
+    }
+
+    @Override
+    public void addContentView(View view, ViewGroup.LayoutParams params) {
+        getDelegate().addContentView(view, params);
+    }
+
+    @Override
+    protected void onPostResume() {
+        super.onPostResume();
+        getDelegate().onPostResume();
+    }
+
+    @Override
+    protected void onTitleChanged(CharSequence title, int color) {
+        super.onTitleChanged(title, color);
+        getDelegate().setTitle(title);
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        getDelegate().onConfigurationChanged(newConfig);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        getDelegate().onSaveInstanceState(outState);
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        getDelegate().onStart();
+        if (!this.mConnection.isBound()) {
+            Intent intent = new Intent(getApplicationContext(), (Class<?>) TeamTalkService.class);
+            Log.d("bearware", "Binding TeamTalk service");
+            if (!bindService(intent, this.mConnection, 1)) {
+                Log.e("bearware", "Failed to bind to TeamTalk service");
+            }
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        getDelegate().onStop();
+        updateSettings();
+        if (this.mConnection.isBound()) {
+            Log.d("bearware", "Unbinding TeamTalk service");
+            try {
+                unbindService(this.mConnection);
+            } catch (Exception ignored) {}
+            this.mConnection.setBound(false);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        getDelegate().onDestroy();
+    }
+
+    @Override
+    public void invalidateOptionsMenu() {
+        getDelegate().invalidateOptionsMenu();
+    }
+
+    void updateSettings() {
+        if (getService() == null || getClient() == null || getService().getUsers() == null) {
+            return;
+        }
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+        User myself = getService().getUsers().get(Integer.valueOf(getClient().getMyUserID()));
+        if (myself != null) {
+            ServerEntry serverEntry = getService().getServerEntry();
+            String nickname = serverEntry != null ? serverEntry.nickname : "";
+            if (TextUtils.isEmpty(nickname)) {
+                nickname = prefs.getString(Preferences.PREF_GENERAL_NICKNAME, "");
+            }
+            if (!nickname.equals(myself.szNickname)) {
+                getClient().doChangeNickname(nickname);
+            }
+            int statusmode = myself.nStatusMode & (-257);
+            String statusmsg = serverEntry != null ? serverEntry.statusmsg : "";
+            if (TextUtils.isEmpty(statusmsg)) {
+                statusmsg = prefs.getString(Preferences.PREF_GENERAL_STATUSMSG, "");
+            }
+            if (prefs.getBoolean(Preferences.PREF_GENERAL_GENDER, false)) {
+                statusmode |= 256;
+            }
+            getClient().doChangeStatus(statusmode, statusmsg);
+        }
+        int mf_volume = prefs.getInt(Preferences.PREF_SOUNDSYSTEM_MEDIAFILE_VOLUME, 50);
+        int mf_volume2 = Utils.refVolume(mf_volume);
+        for (User u : getService().getUsers().values()) {
+            getClient().setUserVolume(u.nUserID, 4, mf_volume2);
+        }
+    }
+
+    @Override
+    protected void onPostCreate(Bundle savedInstanceState) {
+        super.onPostCreate(savedInstanceState);
+        getDelegate().onPostCreate(savedInstanceState);
+        if (getDelegate().getSupportActionBar() != null) {
+            getDelegate().getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+        }
+        try {
+            View listView = findViewById(android.R.id.list);
+            if (listView != null) {
+                listView.setFitsSystemWindows(false);
+                listView.setVerticalScrollBarEnabled(true);
+                if (listView instanceof ViewGroup) {
+                    ((ViewGroup) listView).setClipToPadding(false);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    @Override
+    public boolean onIsMultiPane() {
+        return false;
+    }
+
+    @Override
+    protected boolean isValidFragment(String fragmentName) {
+        return GeneralPreferenceFragment.class.getName().equals(fragmentName) || BackgroundMgmtPreferenceFragment.class.getName().equals(fragmentName) || SoundEventsPreferenceFragment.class.getName().equals(fragmentName) || ConnectionPreferenceFragment.class.getName().equals(fragmentName) || ServerListPreferenceFragment.class.getName().equals(fragmentName) || TtsPreferenceFragment.class.getName().equals(fragmentName) || SoundSystemPreferenceFragment.class.getName().equals(fragmentName) || AntiSpamPreferenceFragment.class.getName().equals(fragmentName) || AboutPreferenceFragment.class.getName().equals(fragmentName) || SoundPacksPreferenceFragment.class.getName().equals(fragmentName) || RecordingPreferenceFragment.class.getName().equals(fragmentName) || DisplayPreferenceFragment.class.getName().equals(fragmentName) || PerformancePreferenceFragment.class.getName().equals(fragmentName) || DebugPreferenceFragment.class.getName().equals(fragmentName);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == 16908332) {
+            onBackPressed();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if ((requestCode != 2 || resultCode != -1) && requestCode == 2001) {
+            if (resultCode == -1 && data != null) {
+                TeamTalkService service = getService();
+                if (service != null) {
+                    service.setMediaProjectionData(resultCode, data);
+                }
+                SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+                String source = pendingInputSource != null ? pendingInputSource : "internal";
+                prefs.edit().putString(Preferences.PREF_SOUNDSYSTEM_INPUT_SOURCE, source).apply();
+                pendingInputSource = null;
+                recreate();
+                return;
+            }
+            Toast.makeText(this, "Screen capture permission denied", 0).show();
+        }
+    }
+
+    @Override
+    public void onBuildHeaders(List<PreferenceActivity.Header> target) {
+        loadHeadersFromResource(R.xml.pref_headers, target);
+    }
+
+        public static boolean lambda$static$0(Preference preference, Object value) {
+        String stringValue = value.toString();
+        if (preference instanceof ListPreference) {
+            ListPreference listPreference = (ListPreference) preference;
+            int index = listPreference.findIndexOfValue(stringValue);
+            preference.setSummary(index >= 0 ? listPreference.getEntries()[index] : null);
+            return true;
+        }
+        if (preference instanceof RingtonePreference) {
+            if (!TextUtils.isEmpty(stringValue)) {
+                Ringtone ringtone = RingtoneManager.getRingtone(preference.getContext(), Uri.parse(stringValue));
+                if (ringtone == null) {
+                    preference.setSummary((CharSequence) null);
+                    return true;
+                }
+                String name = ringtone.getTitle(preference.getContext());
+                preference.setSummary(name);
+                return true;
+            }
+            return true;
+        }
+        if (preference instanceof EditTextPreference) {
+            if (Preferences.PREF_GENERAL_CLIENTNAME.equals(preference.getKey())) {
+                preference.setSummary(TextUtils.isEmpty(stringValue) ? AppInfo.APPNAME_SHORT : stringValue);
+                return true;
+            }
+        }
+        preference.setSummary(stringValue);
+        return true;
+    }
+
+    public static void bindPreferenceSummaryToValue(Preference preference) {
+        if (preference == null) return;
+        preference.setOnPreferenceChangeListener(sBindPreferenceSummaryToValueListener);
+        sBindPreferenceSummaryToValueListener.onPreferenceChange(preference, PreferenceManager.getDefaultSharedPreferences(preference.getContext()).getString(preference.getKey(), ""));
+    }
+
+    public static class GeneralPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_general);
+            PreferencesActivity.bindPreferenceSummaryToValue(findPreference(Preferences.PREF_GENERAL_NICKNAME));
+            PreferencesActivity.bindPreferenceSummaryToValue(findPreference(Preferences.PREF_GENERAL_STATUSMSG));
+            PreferencesActivity.bindPreferenceSummaryToValue(findPreference(Preferences.PREF_GENERAL_CLIENTNAME));
+
+            Preference recordingFormat = findPreference(Preferences.PREF_RECORDING_FORMAT);
+            if (recordingFormat != null) {
+                PreferencesActivity.bindPreferenceSummaryToValue(recordingFormat);
+            }
+            Preference recordingBitrate = findPreference(Preferences.PREF_RECORDING_MP3_BITRATE);
+            if (recordingBitrate != null) {
+                PreferencesActivity.bindPreferenceSummaryToValue(recordingBitrate);
+            }
+            PreferencesActivity.bindPreferenceSummaryToValue(findPreference(Preferences.PREF_STREAM_RESOLVER_URL));
+
+            Preference fileMgrPref = findPreference(Preferences.PREF_GENERAL_DEFAULT_FILE_MANAGER);
+            if (fileMgrPref != null) {
+                PreferencesActivity.bindPreferenceSummaryToValue(fileMgrPref);
+            }
+
+            Preference showUsernamesPref = findPreference(Preferences.PREF_GENERAL_SHOWUSERNAMES);
+            if (showUsernamesPref != null) {
+                showUsernamesPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                    Utils.invalidatePreferencesCache();
+                    return true;
+                });
+            }
+
+            Preference langPref = findPreference("app_language");
+            if (langPref != null) {
+                PreferencesActivity.bindPreferenceSummaryToValue(langPref);
+                langPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                    String lang = (String) newValue;
+                    LocaleHelper.applyLanguage(lang);
+                    PreferencesActivity.sBindPreferenceSummaryToValueListener.onPreferenceChange(preference, newValue);
+                    if (getActivity() != null) {
+                        getActivity().recreate();
+                    }
+                    return true;
+                });
+            }
+
+            Preference batteryOptPref = findPreference("battery_optimization");
+            if (batteryOptPref != null) {
+                batteryOptPref.setOnPreferenceClickListener(pref -> {
+                    if (getActivity() != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        String packageName = getActivity().getPackageName();
+                        PowerManager pm = (PowerManager) getActivity().getSystemService(Context.POWER_SERVICE);
+                        if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+                            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                            intent.setData(Uri.parse("package:" + packageName));
+                            try {
+                                getActivity().startActivity(intent);
+                            } catch (Exception e) {
+                                Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                                getActivity().startActivity(fallback);
+                            }
+                        } else {
+                            Toast.makeText(getActivity(), R.string.battery_optimization_already_ignored, Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                    return true;
+                });
+            }
+
+            Preference checkUpdatePref = findPreference("check_updates");
+            if (checkUpdatePref != null) {
+                checkUpdatePref.setOnPreferenceClickListener(pref -> {
+                    AppUpdateManager.checkUpdate(getActivity(), true);
+                    return true;
+                });
+            }
+
+            Preference bearwareLogin = findPreference(Preferences.PREF_GENERAL_BEARWARE_CHECKED);
+            if (bearwareLogin != null) {
+                bearwareLogin.setOnPreferenceChangeListener((preference, o) -> {
+                    Intent edit = new Intent(getActivity(), (Class<?>) WebLoginActivity.class);
+                    getActivity().startActivityForResult(edit, 2);
+                    return true;
+                });
+            }
+        }
+
+            @Override
+            public void onResume() {
+                super.onResume();
+                if (getActivity() == null) return;
+                BearWareAccountManager manager = BearWareAccountManager.getInstance(getActivity());
+                boolean hasAccounts = manager.hasAccounts();
+                SwitchPreference preference = (SwitchPreference) findPreference(Preferences.PREF_GENERAL_BEARWARE_CHECKED);
+                if (preference != null) {
+                    preference.setChecked(hasAccounts);
+                    if (hasAccounts) {
+                        BearWareAccount active = manager.getActiveAccount();
+                        int count = manager.getAccounts().size();
+                        String summary = active != null ? active.getDisplayName() : "";
+                        if (count > 1) {
+                            summary += " (" + count + ")";
+                        }
+                        preference.setSummary(summary);
+                    } else {
+                        preference.setSummary(R.string.pref_summary_bearwareid);
+                    }
+                }
+            }
+
+            @Override
+            public void onViewCreated(View view, Bundle savedInstanceState) {
+                super.onViewCreated(view, savedInstanceState);
+                PreferenceDependencyHelper.setup(this);
+            }
+        }
+
+        public static class ServerListPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_serverlist);
+        }
+
+        @Override
+        public void onResume() {
+            super.onResume();
+        }
+    }
+
+        public static class SoundPacksPreferenceFragment extends PreferenceFragment {
+        private static final int REQUEST_CUSTOM_FILE_PICKER = 101;
+        private static final int REQUEST_PICK_SOUND = 100;
+
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_soundpacks);
+            Preference packPref = findPreference("sound_pack_preference");
+            if (packPref instanceof ListPreference) {
+                PreferencesActivity.bindPreferenceSummaryToValue(packPref);
+            }
+            Preference importPref = findPreference("import_sound_pack");
+            if (importPref != null) {
+                importPref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() { 
+                    @Override
+                    public final boolean onPreferenceClick(Preference preference) {
+                        boolean lambda$onCreate$0;
+                        lambda$onCreate$0 = PreferencesActivity.SoundPacksPreferenceFragment.this.lambda$onCreate$0(preference);
+                        return lambda$onCreate$0;
+                    }
+                });
+            }
+        }
+
+                public boolean lambda$onCreate$0(Preference pref) {
+            Utils.showFilePicker((Fragment) this, 100, 101, false, "audio/*");
+            return true;
+        }
+
+        @Override
+        public void onActivityResult(int requestCode, int resultCode, Intent data) {
+            if (requestCode == 100) {
+                getActivity();
+                if (resultCode == -1 && data != null) {
+                    Uri uri = data.getData();
+                    if (uri != null) {
+                        importSoundFile(uri);
+                        return;
+                    }
+                    return;
+                }
+            }
+            if (requestCode == 101) {
+                getActivity();
+                if (resultCode == -1 && data != null) {
+                    String path = data.getStringExtra(CustomFilePickerActivity.EXTRA_FILE_PATH);
+                    if (path != null) {
+                        importSoundFile(Uri.fromFile(new File(path)));
+                        return;
+                    }
+                    return;
+                }
+            }
+            super.onActivityResult(requestCode, resultCode, data);
+        }
+
+        private void importSoundFile(final Uri uri) {
+            final Context context = getActivity();
+            if (context == null) {
+                return;
+            }
+            final String[] eventKeys = {"serverlost", "on", "off", "user_message", "channel_message", "channel_message_sent", "broadcast_message", "fileupdate", "voiceact_enable", "voiceact_disable", "voiceact_on", "voiceact_off", "intercept", "interceptend", "txqueue_start", "txqueue_stop", "user_join", "user_left", "logged_on", "logged_off"};
+            final int[] labelResIds = {
+                R.string.sound_event_serverlost, R.string.sound_event_tx_on, R.string.sound_event_tx_off,
+                R.string.sound_event_user_msg, R.string.sound_event_chan_msg, R.string.sound_event_chan_msg_sent,
+                R.string.sound_event_broadcast_msg, R.string.sound_event_fileupdate, R.string.sound_event_voiceact_enable,
+                R.string.sound_event_voiceact_disable, R.string.sound_event_voiceact_on, R.string.sound_event_voiceact_off,
+                R.string.sound_event_intercept, R.string.sound_event_interceptend, R.string.sound_event_txqueue_start,
+                R.string.sound_event_txqueue_stop, R.string.sound_event_user_join, R.string.sound_event_user_left,
+                R.string.sound_event_logged_on, R.string.sound_event_logged_off
+            };
+            final String[] eventLabels = new String[labelResIds.length];
+            for (int i = 0; i < labelResIds.length; i++) {
+                eventLabels[i] = context.getString(labelResIds[i]);
+            }
+            MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(context);
+            builder.setTitle(R.string.sound_assign_title);
+            builder.setItems(eventLabels, new DialogInterface.OnClickListener() { 
+                @Override
+                public final void onClick(DialogInterface dialogInterface, int i) {
+                    PreferencesActivity.SoundPacksPreferenceFragment.lambda$importSoundFile$1(eventKeys, context, uri, eventLabels, dialogInterface, i);
+                }
+            });
+            builder.setNegativeButton(android.R.string.cancel, (DialogInterface.OnClickListener) null);
+            builder.show();
+        }
+
+        public static void lambda$importSoundFile$1(String[] eventKeys, Context context, Uri uri, String[] eventLabels, DialogInterface dialog, int which) {
+            String fileName = eventKeys[which] + ".ogg";
+            File soundsDir = new File(context.getFilesDir(), "sounds");
+            soundsDir.mkdirs();
+            File destFile = new File(soundsDir, fileName);
+            try {
+                InputStream in = context.getContentResolver().openInputStream(uri);
+                try {
+                    FileOutputStream out = new FileOutputStream(destFile);
+                    try {
+                        byte[] buf = new byte[8192];
+                        while (true) {
+                            int len = in.read(buf);
+                            if (len <= 0) {
+                                break;
+                            } else {
+                                out.write(buf, 0, len);
+                            }
+                        }
+                        SharedPreferences.Editor editor = PreferenceManager.getDefaultSharedPreferences(context).edit();
+                        editor.putString("sound_pack_preference", "custom");
+                        editor.putString("custom_sound_" + eventKeys[which], destFile.getAbsolutePath());
+                        editor.apply();
+                        Toast.makeText(context, context.getString(R.string.sound_imported_for, eventLabels[which]), Toast.LENGTH_SHORT).show();
+                        out.close();
+                        if (in != null) {
+                            in.close();
+                        }
+                    } finally {
+                    }
+                } finally {
+                }
+            } catch (IOException e) {
+                Toast.makeText(context, "Failed to import sound: " + e.getMessage(), 1).show();
+            }
+        }
+    }
+
+        public static class SoundEventsPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_soundevents);
+        }
+    }
+
+        public static class ConnectionPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_connection);
+        }
+
+        @Override
+        public void onViewCreated(View view, Bundle savedInstanceState) {
+            super.onViewCreated(view, savedInstanceState);
+            PreferenceDependencyHelper.setup(this);
+        }
+    }
+
+        public static class TtsPreferenceFragment extends PreferenceFragment implements SharedPreferences.OnSharedPreferenceChangeListener {
+        @Override
+        public void onResume() {
+            super.onResume();
+            getPreferenceManager().getSharedPreferences().registerOnSharedPreferenceChangeListener(this);
+        }
+
+        @Override
+        public void onPause() {
+            super.onPause();
+            getPreferenceManager().getSharedPreferences().unregisterOnSharedPreferenceChangeListener(this);
+        }
+
+        @Override
+        public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+            Preference masterToggle = findPreference("pref_master_tts_toggle");
+            if (masterToggle != null && !"pref_master_tts_toggle".equals(key)) {
+                PreferencesActivity.updateMasterToggleText(masterToggle, getPreferenceScreen());
+            }
+        }
+
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_tts);
+            final Preference masterToggle = findPreference("pref_master_tts_toggle");
+            if (masterToggle != null) {
+                PreferencesActivity.updateMasterToggleText(masterToggle, getPreferenceScreen());
+                masterToggle.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() { 
+                    @Override
+                    public final boolean onPreferenceClick(Preference preference) {
+                        boolean lambda$onCreate$0;
+                        lambda$onCreate$0 = PreferencesActivity.TtsPreferenceFragment.this.lambda$onCreate$0(masterToggle, preference);
+                        return lambda$onCreate$0;
+                    }
+                });
+            }
+            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getActivity().getBaseContext());
+            TTSWrapper tts = new TTSWrapper(getActivity().getBaseContext(), prefs.getString("pref_speech_engine", TTSWrapper.defaultEngineName));
+            List<TextToSpeech.EngineInfo> engines = tts.getEngines();
+            ListPreference enginePrefs = (ListPreference) findPreference("pref_speech_engine");
+            ArrayList<String> entries = new ArrayList<>();
+            ArrayList<String> values = new ArrayList<>();
+            for (TextToSpeech.EngineInfo info : engines) {
+                entries.add(info.label);
+                values.add(info.name);
+            }
+            enginePrefs.setEntries((CharSequence[]) entries.toArray(new CharSequence[engines.size()]));
+            enginePrefs.setEntryValues((CharSequence[]) values.toArray(new CharSequence[engines.size()]));
+            if (Build.VERSION.SDK_INT <= 26) {
+                SwitchPreference mTtsPref = (SwitchPreference) findPreference("pref_a11y_volume");
+                PreferenceCategory mTtsCat = (PreferenceCategory) findPreference("tts_def");
+                mTtsCat.removePreference(mTtsPref);
+            }
+        }
+
+                public boolean lambda$onCreate$0(Preference masterToggle, Preference preference) {
+            boolean allChecked = PreferencesActivity.isAllChecked(getPreferenceScreen());
+            PreferencesActivity.toggleAll(getPreferenceScreen(), !allChecked);
+            PreferencesActivity.updateMasterToggleText(masterToggle, getPreferenceScreen());
+            return true;
+        }
+
+        @Override
+        public void onViewCreated(View view, Bundle savedInstanceState) {
+            super.onViewCreated(view, savedInstanceState);
+            PreferenceDependencyHelper.setup(this);
+        }
+    }
+
+        public static class SoundSystemPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_soundsystem);
+            Preference eqPref = findPreference("pref_open_equalizer");
+            if (eqPref != null) {
+                eqPref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() { 
+                    @Override
+                    public final boolean onPreferenceClick(Preference preference) {
+                        return SoundSystemPreferenceFragment.this.lambda$onCreate$0(preference);
+                    }
+                });
+            }
+            ListPreference inputSourcePref = (ListPreference) findPreference(Preferences.PREF_SOUNDSYSTEM_INPUT_SOURCE);
+            if (inputSourcePref != null) {
+                inputSourcePref.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() { 
+                    @Override
+                    public final boolean onPreferenceChange(Preference preference, Object obj) {
+                        return SoundSystemPreferenceFragment.this.lambda$onCreate$1(preference, obj);
+                    }
+                });
+            }
+
+            setupExperimentalCapturePreferences();
+        }
+
+        private void setupExperimentalCapturePreferences() {
+            final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getActivity());
+
+            final Preference captureModePref = findPreference(Preferences.PREF_SOUNDSYSTEM_EXPERIMENTAL_CAPTURE_MODE);
+            if (captureModePref != null) {
+                updateCaptureModeSummary(captureModePref, prefs);
+                captureModePref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        showCaptureModeDialog(captureModePref, prefs);
+                        return true;
+                    }
+                });
+            }
+
+            final Preference inputDevicePref = findPreference(Preferences.PREF_SOUNDSYSTEM_EXPERIMENTAL_INPUT_DEVICE);
+            if (inputDevicePref != null) {
+                updateInputDeviceSummary(inputDevicePref, prefs);
+                inputDevicePref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        showInputDeviceDialog(inputDevicePref, prefs);
+                        return true;
+                    }
+                });
+            }
+
+            Preference detectedMicsPref = findPreference("detected_microphones");
+            if (detectedMicsPref != null) {
+                detectedMicsPref.setSummary(MicrophoneInputHelper.getDetectedMicrophonesSummary(getActivity()));
+                detectedMicsPref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        new MaterialAlertDialogBuilder(getActivity())
+                                .setTitle(R.string.pref_title_detected_microphones)
+                                .setMessage(MicrophoneInputHelper.buildDetectedMicrophonesReport(getActivity()))
+                                .setPositiveButton(android.R.string.ok, null)
+                                .show();
+                        return true;
+                    }
+                });
+            }
+
+            final Preference screenAudioPref = findPreference(Preferences.PREF_SCREENSHARE_AUDIO_MODE);
+            if (screenAudioPref != null) {
+                updateScreenAudioSummary(screenAudioPref, prefs);
+                screenAudioPref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        showScreenAudioDialog(screenAudioPref, prefs);
+                        return true;
+                    }
+                });
+            }
+        }
+
+        private void updateCaptureModeSummary(Preference pref, SharedPreferences prefs) {
+            int mode = MicrophoneInputHelper.getExperimentalCaptureMode(prefs);
+            pref.setSummary(MicrophoneInputHelper.getExperimentalCaptureModeLabel(getActivity(), mode));
+        }
+
+        private void showCaptureModeDialog(final Preference pref, final SharedPreferences prefs) {
+            final List<MicrophoneInputHelper.InputModeOption> options = MicrophoneInputHelper.getExperimentalCaptureModes(getActivity());
+            String[] titles = new String[options.size()];
+            int current = MicrophoneInputHelper.getExperimentalCaptureMode(prefs);
+            int selectedIdx = 0;
+            for (int i = 0; i < options.size(); i++) {
+                titles[i] = options.get(i).title;
+                if (options.get(i).deviceId == current) {
+                    selectedIdx = i;
+                }
+            }
+            new MaterialAlertDialogBuilder(getActivity())
+                    .setTitle(R.string.pref_title_experimental_capture_mode)
+                    .setSingleChoiceItems(titles, selectedIdx, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            int chosenMode = options.get(which).deviceId;
+                            prefs.edit().putInt(Preferences.PREF_SOUNDSYSTEM_EXPERIMENTAL_CAPTURE_MODE, chosenMode).apply();
+                            updateCaptureModeSummary(pref, prefs);
+                            PreferencesActivity act = (PreferencesActivity) getActivity();
+                            if (act != null && act.getService() != null) {
+                                act.getService().applyConfiguredInputDeviceSelection();
+                            }
+                            dialog.dismiss();
+                        }
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        }
+
+        private void updateInputDeviceSummary(Preference pref, SharedPreferences prefs) {
+            pref.setSummary(MicrophoneInputHelper.getExperimentalInputDeviceLabel(getActivity(), prefs));
+        }
+
+        private void showInputDeviceDialog(final Preference pref, final SharedPreferences prefs) {
+            final List<MicrophoneInputHelper.InputDeviceOption> options = MicrophoneInputHelper.getAvailableExperimentalInputDevices(getActivity());
+            String[] titles = new String[options.size()];
+            String current = MicrophoneInputHelper.getExperimentalInputDeviceId(prefs);
+            int selectedIdx = 0;
+            for (int i = 0; i < options.size(); i++) {
+                titles[i] = options.get(i).title;
+                if (TextUtils.equals(options.get(i).deviceId, current)) {
+                    selectedIdx = i;
+                }
+            }
+            new MaterialAlertDialogBuilder(getActivity())
+                    .setTitle(R.string.pref_title_experimental_input_device)
+                    .setSingleChoiceItems(titles, selectedIdx, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            String chosenId = options.get(which).deviceId;
+                            prefs.edit().putString(Preferences.PREF_SOUNDSYSTEM_EXPERIMENTAL_INPUT_DEVICE, chosenId).apply();
+                            updateInputDeviceSummary(pref, prefs);
+                            PreferencesActivity act = (PreferencesActivity) getActivity();
+                            if (act != null && act.getService() != null) {
+                                act.getService().applyConfiguredInputDeviceSelection();
+                            }
+                            dialog.dismiss();
+                        }
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        }
+
+        private void updateScreenAudioSummary(Preference pref, SharedPreferences prefs) {
+            int mode = ScreenShareAudioHelper.getAudioMode(prefs);
+            pref.setSummary(ScreenShareAudioHelper.getAudioModeLabel(getActivity(), mode));
+        }
+
+        private void showScreenAudioDialog(final Preference pref, final SharedPreferences prefs) {
+            final List<ScreenShareAudioHelper.AudioModeOption> options = ScreenShareAudioHelper.getAudioModeOptions(getActivity());
+            String[] titles = new String[options.size()];
+            int current = ScreenShareAudioHelper.getAudioMode(prefs);
+            int selectedIdx = 0;
+            for (int i = 0; i < options.size(); i++) {
+                titles[i] = options.get(i).title;
+                if (options.get(i).mode == current) {
+                    selectedIdx = i;
+                }
+            }
+            new MaterialAlertDialogBuilder(getActivity())
+                    .setTitle(R.string.pref_title_screenshare_audio_mode)
+                    .setSingleChoiceItems(titles, selectedIdx, new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            int chosenMode = options.get(which).mode;
+                            ScreenShareAudioHelper.setAudioMode(prefs, chosenMode);
+                            updateScreenAudioSummary(pref, prefs);
+                            PreferencesActivity act = (PreferencesActivity) getActivity();
+                            if (act != null && act.getService() != null) {
+                                act.getService().setScreenShareAudioMode(chosenMode);
+                            }
+                            dialog.dismiss();
+                        }
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        }
+
+        public boolean lambda$onCreate$0(Preference preference) {
+            Intent intent = new Intent(getActivity(), (Class<?>) EqualizerActivity.class);
+            startActivity(intent);
+            return true;
+        }
+
+        public boolean lambda$onCreate$1(Preference preference, Object newValue) {
+            String value = (String) newValue;
+            if (("internal".equals(value) || "mixed".equals(value)) && !TeamTalkService.hasMediaProjectionData()) {
+                PreferencesActivity.pendingInputSource = value;
+                MediaProjectionManager mediaProjectionManager = (MediaProjectionManager) getActivity().getSystemService("media_projection");
+                if (mediaProjectionManager != null) {
+                    getActivity().startActivityForResult(mediaProjectionManager.createScreenCaptureIntent(), 2001);
+                    return false;
+                }
+                return false;
+            }
+            return true;
+        }
+
+        @Override
+        public void onViewCreated(View view, Bundle savedInstanceState) {
+            super.onViewCreated(view, savedInstanceState);
+            PreferenceDependencyHelper.setup(this);
+        }
+    }
+
+        public static class AboutPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_about);
+        }
+    }
+
+        public static class AntiSpamPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_antispam);
+
+            Preference ignorePref = findPreference("pref_open_ignore_list");
+            if (ignorePref != null) {
+                ignorePref.setOnPreferenceClickListener(preference -> {
+                    Intent intent = new Intent(getActivity(), IgnoreListActivity.class);
+                    intent.putExtra(IgnoreListActivity.EXTRA_MODE, IgnoreListActivity.MODE_IGNORE);
+                    startActivity(intent);
+                    return true;
+                });
+            }
+            Preference whitelistPref = findPreference("pref_open_whitelist");
+            if (whitelistPref != null) {
+                whitelistPref.setOnPreferenceClickListener(preference -> {
+                    Intent intent = new Intent(getActivity(), IgnoreListActivity.class);
+                    intent.putExtra(IgnoreListActivity.EXTRA_MODE, IgnoreListActivity.MODE_WHITELIST);
+                    startActivity(intent);
+                    return true;
+                });
+            }
+        }
+
+        @Override
+        public void onResume() {
+            super.onResume();
+            updateListSummaries();
+        }
+
+        private void updateListSummaries() {
+            Preference ignorePref = findPreference("pref_open_ignore_list");
+            if (ignorePref != null) {
+                ignorePref.setSummary(getString(R.string.pref_summary_antispam_ignore_list,
+                        AntiSpamStore.getNicks(getActivity(), Preferences.PREF_ANTISPAM_IGNORE_LIST).size()));
+            }
+            Preference whitelistPref = findPreference("pref_open_whitelist");
+            if (whitelistPref != null) {
+                whitelistPref.setSummary(getString(R.string.pref_summary_antispam_whitelist,
+                        AntiSpamStore.getNicks(getActivity(), Preferences.PREF_ANTISPAM_WHITELIST).size()));
+            }
+        }
+
+        @Override
+        public void onViewCreated(View view, Bundle savedInstanceState) {
+            super.onViewCreated(view, savedInstanceState);
+            PreferenceDependencyHelper.setup(this);
+        }
+    }
+
+        public static class RecordingPreferenceFragment extends PreferenceFragment {
+        private static final int REQUEST_FOLDER_PICKER = 3001;
+        private static final int REQUEST_FOLDER_SAF = 3002;
+
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_recording);
+            Preference openRecPref = findPreference("pref_open_recordings_manager");
+            if (openRecPref != null) {
+                openRecPref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        startActivity(new Intent(getActivity(), RecordingsActivity.class));
+                        return true;
+                    }
+                });
+            }
+
+            Preference pathPref = findPreference(Preferences.PREF_RECORDING_PATH);
+            if (pathPref != null) {
+                updatePathSummary(pathPref);
+                pathPref.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() { 
+                    @Override
+                    public final boolean onPreferenceClick(Preference preference) {
+                        PreferencesActivity.RecordingPreferenceFragment.this.showFolderPickerDialog();
+                        return true;
+                    }
+                });
+            }
+        }
+
+        private void updatePathSummary(Preference pathPref) {
+            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getActivity());
+            String path = prefs.getString(Preferences.PREF_RECORDING_PATH, "");
+            if (path.isEmpty()) {
+                File defaultDir = Utils.getRecordingsDirectory(getActivity());
+                pathPref.setSummary(getString(R.string.recording_current_path, new Object[]{defaultDir.getAbsolutePath()}));
+            } else {
+                pathPref.setSummary(getString(R.string.recording_current_path, new Object[]{path}));
+            }
+        }
+
+        private void showFolderPickerDialog() {
+            Utils.showFilePicker((Fragment) this, 3002, 3001, true, (String) null);
+        }
+
+        @Override
+        public void onActivityResult(int requestCode, int resultCode, Intent data) {
+            Uri treeUri;
+            super.onActivityResult(requestCode, resultCode, data);
+            if (resultCode != -1 || data == null) {
+                return;
+            }
+            String folderPath = null;
+            if (requestCode == 3001) {
+                folderPath = data.getStringExtra(CustomFilePickerActivity.EXTRA_FILE_PATH);
+            } else if (requestCode == 3002 && (treeUri = data.getData()) != null && (folderPath = resolveTreeUriToPath(treeUri)) == null) {
+                folderPath = treeUri.toString();
+            }
+            if (folderPath != null) {
+                SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getActivity());
+                prefs.edit().putString(Preferences.PREF_RECORDING_PATH, folderPath).apply();
+                Preference pathPref = findPreference(Preferences.PREF_RECORDING_PATH);
+                if (pathPref != null) {
+                    updatePathSummary(pathPref);
+                }
+            }
+        }
+
+        private String resolveTreeUriToPath(Uri treeUri) {
+            try {
+                String docId = DocumentsContract.getTreeDocumentId(treeUri);
+                if (docId != null && docId.contains(":")) {
+                    String[] parts = docId.split(":");
+                    String type = parts[0];
+                    String relativePath = parts.length > 1 ? parts[1] : "";
+                    if ("primary".equalsIgnoreCase(type)) {
+                        return Environment.getExternalStorageDirectory().getAbsolutePath() + "/" + relativePath;
+                    }
+                    return null;
+                }
+                return null;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        @Override
+        public void onViewCreated(View view, Bundle savedInstanceState) {
+            super.onViewCreated(view, savedInstanceState);
+            PreferenceDependencyHelper.setup(this);
+        }
+    }
+
+    @Override
+    public void onServiceConnected(TeamTalkService service) {
+    }
+
+    @Override
+    public void onServiceDisconnected(TeamTalkService service) {
+    }
+
+        public static class BackgroundMgmtPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_background_mgmt);
+            PreferencesActivity.bindPreferenceSummaryToValue(findPreference(Preferences.PREF_BG_MGMT_DISPLAY_TYPE));
+            SwitchPreference bgMgmtPref = (SwitchPreference) findPreference(Preferences.PREF_BG_MGMT_ENABLED);
+            if (bgMgmtPref != null) {
+                bgMgmtPref.setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() { 
+                    @Override
+                    public final boolean onPreferenceChange(Preference preference, Object obj) {
+                        boolean lambda$onCreate$0;
+                        lambda$onCreate$0 = PreferencesActivity.BackgroundMgmtPreferenceFragment.this.lambda$onCreate$0(preference, obj);
+                        return lambda$onCreate$0;
+                    }
+                });
+            }
+        }
+
+                public boolean lambda$onCreate$0(Preference preference, Object newValue) {
+            boolean enabled = ((Boolean) newValue).booleanValue();
+            String type = PreferenceManager.getDefaultSharedPreferences(getActivity()).getString(Preferences.PREF_BG_MGMT_DISPLAY_TYPE, "window");
+            if (!enabled || !"window".equals(type) || Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(getActivity())) {
+                return true;
+            }
+            Toast.makeText(getActivity(), R.string.bg_mgmt_permission_required, 1).show();
+            Intent intent = new Intent("android.settings.action.MANAGE_OVERLAY_PERMISSION", Uri.parse("package:" + getActivity().getPackageName()));
+            startActivity(intent);
+            return false;
+        }
+
+        @Override
+        public void onResume() {
+            super.onResume();
+            SwitchPreference bgMgmtPref = (SwitchPreference) findPreference(Preferences.PREF_BG_MGMT_ENABLED);
+            if (bgMgmtPref != null) {
+                String type = PreferenceManager.getDefaultSharedPreferences(getActivity()).getString(Preferences.PREF_BG_MGMT_DISPLAY_TYPE, "window");
+                if (Build.VERSION.SDK_INT >= 23 && "window".equals(type) && !Settings.canDrawOverlays(getActivity())) {
+                    bgMgmtPref.setChecked(false);
+                }
+            }
+        }
+
+        @Override
+        public void onViewCreated(View view, Bundle savedInstanceState) {
+            super.onViewCreated(view, savedInstanceState);
+            PreferenceDependencyHelper.setup(this);
+        }
+    }
+
+        public static class DisplayPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_display);
+            Preference themePref = findPreference(ThemeHelper.THEME_PREF_KEY);
+            if (themePref != null) {
+                themePref.setOnPreferenceChangeListener((preference, newValue) -> {
+                    Activity activity = getActivity();
+                    if (activity != null) {
+                        PreferenceManager.getDefaultSharedPreferences(activity)
+                                .edit()
+                                .putString(ThemeHelper.THEME_PREF_KEY, String.valueOf(newValue))
+                                .commit();
+                        ThemeHelper.applyTheme(activity);
+                        activity.recreate();
+                    }
+                    return true;
+                });
+            }
+        }
+
+        @Override
+        public void onViewCreated(View view, Bundle savedInstanceState) {
+            super.onViewCreated(view, savedInstanceState);
+            PreferenceDependencyHelper.setup(this);
+        }
+    }
+
+    public static class PerformancePreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_performance);
+
+            Preference ignoreBattery = findPreference("pref_btn_ignore_battery");
+            if (ignoreBattery != null) {
+                updateBatterySummary(ignoreBattery);
+                ignoreBattery.setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        Activity activity = getActivity();
+                        if (activity != null) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                try {
+                                    PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                                    if (pm != null && !pm.isIgnoringBatteryOptimizations(activity.getPackageName())) {
+                                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                                        intent.setData(Uri.parse("package:" + activity.getPackageName()));
+                                        startActivity(intent);
+                                    } else {
+                                        Toast.makeText(activity, R.string.pref_summary_ignore_battery, Toast.LENGTH_SHORT).show();
+                                    }
+                                } catch (Exception e) {
+                                    try {
+                                        Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                                        startActivity(intent);
+                                    } catch (Exception ignored) {}
+                                }
+                            } else {
+                                Toast.makeText(activity, R.string.pref_summary_ignore_battery, Toast.LENGTH_SHORT).show();
+                            }
+                        }
+                        return true;
+                    }
+                });
+            }
+        }
+
+        @Override
+        public void onResume() {
+            super.onResume();
+            Preference ignoreBattery = findPreference("pref_btn_ignore_battery");
+            if (ignoreBattery != null) {
+                updateBatterySummary(ignoreBattery);
+            }
+        }
+
+        private void updateBatterySummary(Preference pref) {
+            Activity activity = getActivity();
+            if (activity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                if (pm != null && pm.isIgnoringBatteryOptimizations(activity.getPackageName())) {
+                    pref.setSummary(getString(R.string.profile_active_label) + " (OK)");
+                } else {
+                    pref.setSummary(R.string.pref_summary_ignore_battery);
+                }
+            }
+        }
+    }
+
+    public static class DebugPreferenceFragment extends PreferenceFragment {
+        @Override
+        public void onCreate(Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            addPreferencesFromResource(R.xml.pref_debug);
+            refreshUI();
+        }
+
+        @Override
+        public void onResume() {
+            super.onResume();
+            refreshUI();
+        }
+
+        private void refreshUI() {
+            final Activity activity = getActivity();
+            if (activity == null) return;
+
+            final List<CrashHistoryManager.CrashEntry> crashes = CrashHistoryManager.getCrashes(activity);
+
+            Preference prefCopyAll = findPreference("pref_debug_copy_all");
+            if (prefCopyAll != null) {
+                if (crashes.isEmpty()) {
+                    prefCopyAll.setSummary(R.string.pref_debug_no_crashes_summary);
+                } else {
+                    prefCopyAll.setSummary(getString(R.string.pref_debug_copy_all_summary) + " (" + crashes.size() + ")");
+                }
+                prefCopyAll.setOnPreferenceClickListener(preference -> {
+                    if (crashes.isEmpty()) {
+                        Toast.makeText(activity, R.string.pref_debug_empty_toast, Toast.LENGTH_SHORT).show();
+                        return true;
+                    }
+                    String text = CrashHistoryManager.getAllCrashesFormatted(activity);
+                    ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (cm != null) {
+                        cm.setPrimaryClip(ClipData.newPlainText("TeamTalk Crash History", text));
+                        Toast.makeText(activity, R.string.pref_debug_all_copied_toast, Toast.LENGTH_SHORT).show();
+                    }
+                    return true;
+                });
+            }
+
+            Preference prefShareAll = findPreference("pref_debug_share_all");
+            if (prefShareAll != null) {
+                prefShareAll.setOnPreferenceClickListener(preference -> {
+                    if (crashes.isEmpty()) {
+                        Toast.makeText(activity, R.string.pref_debug_empty_toast, Toast.LENGTH_SHORT).show();
+                        return true;
+                    }
+                    String text = CrashHistoryManager.getAllCrashesFormatted(activity);
+                    Intent intent = new Intent(Intent.ACTION_SEND);
+                    intent.setType("text/plain");
+                    intent.putExtra(Intent.EXTRA_SUBJECT, "TeamTalk Next Crash Log");
+                    intent.putExtra(Intent.EXTRA_TEXT, text);
+                    startActivity(Intent.createChooser(intent, getString(R.string.pref_debug_share_all)));
+                    return true;
+                });
+            }
+
+            Preference prefViewAll = findPreference("pref_debug_view_all");
+            if (prefViewAll != null) {
+                prefViewAll.setOnPreferenceClickListener(preference -> {
+                    if (crashes.isEmpty()) {
+                        Toast.makeText(activity, R.string.pref_debug_empty_toast, Toast.LENGTH_SHORT).show();
+                        return true;
+                    }
+                    showFullLogDialog(activity, CrashHistoryManager.getAllCrashesFormatted(activity));
+                    return true;
+                });
+            }
+
+            Preference prefClear = findPreference("pref_debug_clear");
+            if (prefClear != null) {
+                prefClear.setOnPreferenceClickListener(preference -> {
+                    if (crashes.isEmpty()) {
+                        Toast.makeText(activity, R.string.pref_debug_empty_toast, Toast.LENGTH_SHORT).show();
+                        return true;
+                    }
+                    new MaterialAlertDialogBuilder(activity)
+                            .setTitle(R.string.pref_debug_clear)
+                            .setMessage(R.string.pref_debug_clear_confirm)
+                            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                                CrashHistoryManager.clearAll(activity);
+                                Toast.makeText(activity, R.string.pref_debug_clear_success, Toast.LENGTH_SHORT).show();
+                                refreshUI();
+                            })
+                            .setNegativeButton(R.string.button_cancel, null)
+                            .show();
+                    return true;
+                });
+            }
+
+            PreferenceCategory catHistory = (PreferenceCategory) findPreference("pref_category_crash_history");
+            if (catHistory != null) {
+                catHistory.removeAll();
+                if (crashes.isEmpty()) {
+                    catHistory.setTitle(getString(R.string.pref_debug_category_history));
+                    Preference emptyPref = new Preference(activity);
+                    emptyPref.setTitle(R.string.pref_debug_no_crashes);
+                    emptyPref.setSummary(R.string.pref_debug_no_crashes_summary);
+                    emptyPref.setEnabled(false);
+                    catHistory.addPreference(emptyPref);
+                } else {
+                    catHistory.setTitle(getString(R.string.pref_debug_category_history) + " (" + crashes.size() + ")");
+                    for (final CrashHistoryManager.CrashEntry entry : crashes) {
+                        Preference pref = new Preference(activity);
+                        String icon = entry.fatal ? "💥 " : "⚠️ ";
+                        pref.setTitle(icon + entry.dateStr + " — " + entry.exceptionClass);
+                        String summary = entry.message != null && !entry.message.isEmpty()
+                                ? entry.message
+                                : "Поток: " + entry.threadName;
+                        pref.setSummary(summary);
+                        pref.setOnPreferenceClickListener(p -> {
+                            showCrashDetailsDialog(activity, entry);
+                            return true;
+                        });
+                        catHistory.addPreference(pref);
+                    }
+                }
+            }
+
+            Preference prefTestCrash = findPreference("pref_debug_test_crash");
+            if (prefTestCrash != null) {
+                prefTestCrash.setOnPreferenceClickListener(preference -> {
+                    new MaterialAlertDialogBuilder(activity)
+                            .setTitle(R.string.pref_debug_test_crash)
+                            .setMessage(R.string.pref_debug_test_crash_confirm)
+                            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                                throw new RuntimeException("Тестовый краш из меню отладки (Test crash from Debug Settings)");
+                            })
+                            .setNegativeButton(R.string.button_cancel, null)
+                            .show();
+                    return true;
+                });
+            }
+
+            Preference prefTestError = findPreference("pref_debug_test_error");
+            if (prefTestError != null) {
+                prefTestError.setOnPreferenceClickListener(preference -> {
+                    CrashHistoryManager.logHandledException(activity,
+                            new Exception("Тестовая нефатальная ошибка (Test handled exception)"),
+                            "Зафиксировано пользователем в меню отладки");
+                    Toast.makeText(activity, R.string.pref_debug_test_error_toast, Toast.LENGTH_SHORT).show();
+                    refreshUI();
+                    return true;
+                });
+            }
+        }
+
+        private void showCrashDetailsDialog(final Activity activity, final CrashHistoryManager.CrashEntry entry) {
+            final String formatted = entry.getFormattedText();
+
+            ScrollView scrollView = new ScrollView(activity);
+            TextView textView = new TextView(activity);
+            textView.setText(formatted);
+            textView.setTextIsSelectable(true);
+            textView.setTypeface(Typeface.MONOSPACE);
+            textView.setTextSize(12f);
+            int padding = (int) (16 * activity.getResources().getDisplayMetrics().density);
+            textView.setPadding(padding, padding, padding, padding);
+            scrollView.addView(textView);
+
+            new MaterialAlertDialogBuilder(activity)
+                    .setTitle(entry.dateStr + " (" + (entry.fatal ? "Краш" : "Ошибка") + ")")
+                    .setView(scrollView)
+                    .setPositiveButton(R.string.text_copy, (dialog, which) -> {
+                        ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                        if (cm != null) {
+                            cm.setPrimaryClip(ClipData.newPlainText("TeamTalk Crash Report", formatted));
+                            Toast.makeText(activity, R.string.pref_debug_copied_toast, Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .setNeutralButton(R.string.recordings_action_share, (dialog, which) -> {
+                        Intent intent = new Intent(Intent.ACTION_SEND);
+                        intent.setType("text/plain");
+                        intent.putExtra(Intent.EXTRA_SUBJECT, "TeamTalk Crash Report " + entry.dateStr);
+                        intent.putExtra(Intent.EXTRA_TEXT, formatted);
+                        startActivity(Intent.createChooser(intent, getString(R.string.recordings_action_share)));
+                    })
+                    .setNegativeButton(R.string.button_close, null)
+                    .show();
+        }
+
+        private void showFullLogDialog(final Activity activity, final String allText) {
+            ScrollView scrollView = new ScrollView(activity);
+            TextView textView = new TextView(activity);
+            textView.setText(allText);
+            textView.setTextIsSelectable(true);
+            textView.setTypeface(Typeface.MONOSPACE);
+            textView.setTextSize(11f);
+            int padding = (int) (16 * activity.getResources().getDisplayMetrics().density);
+            textView.setPadding(padding, padding, padding, padding);
+            scrollView.addView(textView);
+
+            new MaterialAlertDialogBuilder(activity)
+                    .setTitle(R.string.pref_debug_view_all)
+                    .setView(scrollView)
+                    .setPositiveButton(R.string.text_copy, (dialog, which) -> {
+                        ClipboardManager cm = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                        if (cm != null) {
+                            cm.setPrimaryClip(ClipData.newPlainText("TeamTalk Crash History", allText));
+                            Toast.makeText(activity, R.string.pref_debug_all_copied_toast, Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .setNeutralButton(R.string.recordings_action_share, (dialog, which) -> {
+                        Intent intent = new Intent(Intent.ACTION_SEND);
+                        intent.setType("text/plain");
+                        intent.putExtra(Intent.EXTRA_SUBJECT, "TeamTalk Crash History");
+                        intent.putExtra(Intent.EXTRA_TEXT, allText);
+                        startActivity(Intent.createChooser(intent, getString(R.string.recordings_action_share)));
+                    })
+                    .setNegativeButton(R.string.button_close, null)
+                    .show();
+        }
+    }
+
+    private AppCompatDelegate getDelegate() {
+        if (this.appCompatDelegate == null) {
+            this.appCompatDelegate = AppCompatDelegate.create(this, (AppCompatCallback) null);
+        }
+        return this.appCompatDelegate;
+    }
+
+        public static boolean isAllChecked(PreferenceGroup group) {
+        for (int i = 0; i < group.getPreferenceCount(); i++) {
+            Preference p = group.getPreference(i);
+            if (!"pref_master_tts_toggle".equals(p.getKey()) && !"pref_master_sound_toggle".equals(p.getKey())) {
+                if (p instanceof TwoStatePreference) {
+                    if (!((TwoStatePreference) p).isChecked()) {
+                        return false;
+                    }
+                } else if ((p instanceof PreferenceGroup) && !isAllChecked((PreferenceGroup) p)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+        public static void toggleAll(PreferenceGroup group, boolean check) {
+        for (int i = 0; i < group.getPreferenceCount(); i++) {
+            Preference p = group.getPreference(i);
+            if (!"pref_master_tts_toggle".equals(p.getKey()) && !"pref_master_sound_toggle".equals(p.getKey())) {
+                if (p instanceof TwoStatePreference) {
+                    ((TwoStatePreference) p).setChecked(check);
+                } else if (p instanceof PreferenceGroup) {
+                    toggleAll((PreferenceGroup) p, check);
+                }
+            }
+        }
+    }
+
+        public static void updateMasterToggleText(Preference masterToggle, PreferenceGroup root) {
+        if (masterToggle != null && root != null) {
+            boolean allChecked = isAllChecked(root);
+            masterToggle.setTitle(allChecked ? R.string.action_deselect_all : R.string.action_select_all);
+        }
+    }
+}

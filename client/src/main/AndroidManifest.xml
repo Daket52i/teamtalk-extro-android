@@ -176,7 +176,7 @@
         </activity>
 
         <service
-            android:name="org.nekit.ttproplus.backend.TeamTalkService"
+            android:name="org.teamtalkextro.backend.TeamTalkService"
             android:foregroundServiceType="microphone|mediaPlayback|mediaProjection"
             android:enabled="true"
             android:exported="false"

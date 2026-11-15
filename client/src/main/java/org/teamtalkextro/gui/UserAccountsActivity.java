@@ -1,0 +1,428 @@
+package org.teamtalkextro.gui;
+import org.teamtalkextro.R;
+
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Environment;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ListView;
+import android.widget.Spinner;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.FileProvider;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Vector;
+
+import org.teamtalkextro.data.ServerEntry;
+
+import dk.bearware.TeamTalkBase;
+import dk.bearware.UserAccount;
+import dk.bearware.UserType;
+import org.teamtalkextro.backend.TeamTalkConnection;
+import org.teamtalkextro.backend.TeamTalkConnectionListener;
+import org.teamtalkextro.backend.TeamTalkService;
+import dk.bearware.events.ClientEventListener;
+
+public class UserAccountsActivity extends AppCompatActivity implements
+        TeamTalkConnectionListener,
+        ClientEventListener.OnCmdUserAccountListener,
+        ClientEventListener.OnCmdUserAccountRemoveListener {
+
+    private static final String TAG = "UserAccountsActivity";
+
+    private TeamTalkConnection mConnection;
+    private ListView accountsListView;
+    private UserAccountAdapter adapter;
+    private List<UserAccount> allAccounts = new ArrayList<>();
+    private List<UserAccount> filteredAccounts = new ArrayList<>();
+    private EditText searchEdit;
+    private Spinner sortSpinner;
+    private boolean isAscending = true;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        ThemeHelper.applyTheme(this);
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_user_accounts);
+        EdgeToEdgeHelper.enableEdgeToEdge(this);
+
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setTitle(R.string.user_accounts);
+        }
+
+        mConnection = new TeamTalkConnection(this);
+        accountsListView = findViewById(R.id.user_accounts_listview);
+        searchEdit = findViewById(R.id.search_accounts_edit);
+
+        adapter = new UserAccountAdapter(this, filteredAccounts);
+        accountsListView.setAdapter(adapter);
+
+        searchEdit.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                filterAccounts(s.toString());
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+
+        sortSpinner = findViewById(R.id.spinner_sort_accounts);
+        ArrayAdapter<String> sortAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item,
+                new String[]{getString(R.string.sort_ascending), getString(R.string.sort_descending)});
+        sortAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        sortSpinner.setAdapter(sortAdapter);
+
+        sortSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                isAscending = (position == 0);
+                filterAccounts(searchEdit.getText().toString());
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+
+        Button btnAdd = findViewById(R.id.btn_add_user_account);
+        btnAdd.setOnClickListener(v -> {
+            Intent intent = new Intent(this, UserAccountEditActivity.class);
+            intent.putExtra(UserAccountEditActivity.EXTRA_IS_EDIT, false);
+            startActivity(intent);
+        });
+
+        accountsListView.setOnItemLongClickListener((parent, view, position, id) -> {
+            UserAccount account = filteredAccounts.get(position);
+            showAccountOptions(account);
+            return true;
+        });
+
+        Intent intent = new Intent(this, TeamTalkService.class);
+        if (!bindService(intent, mConnection, Context.BIND_AUTO_CREATE)) {
+            Log.e(TAG, "Failed to connect to TeamTalk service");
+        }
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item.getItemId() == android.R.id.home) {
+            finish();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (mConnection.isBound() && getService() != null && getClient() != null) {
+            allAccounts.clear();
+            getClient().doListUserAccounts(0, 100);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (mConnection.isBound()) {
+            if (getService() != null) {
+                getService().getEventHandler().unregisterListener(this);
+            }
+            unbindService(mConnection);
+        }
+        super.onDestroy();
+    }
+
+    private TeamTalkService getService() {
+        return mConnection != null ? mConnection.getService() : null;
+    }
+
+    private TeamTalkBase getClient() {
+        TeamTalkService service = getService();
+        return service != null ? service.getTTInstance() : null;
+    }
+
+    @Override
+    public void onServiceConnected(TeamTalkService service) {
+        service.getEventHandler().registerOnCmdUserAccount(this, true);
+        service.getEventHandler().registerOnCmdUserAccountRemove(this, true);
+        TeamTalkBase client = getClient();
+        if (client != null) {
+            client.doListUserAccounts(0, 100);
+        }
+    }
+
+    @Override
+    public void onServiceDisconnected(TeamTalkService service) {}
+
+    @Override
+    public void onCmdUserAccount(UserAccount useraccount) {
+        if (useraccount == null) return;
+        runOnUiThread(() -> {
+            boolean found = false;
+            for (int i = 0; i < allAccounts.size(); i++) {
+                if (allAccounts.get(i).szUsername != null &&
+                    allAccounts.get(i).szUsername.equals(useraccount.szUsername)) {
+                    allAccounts.set(i, useraccount);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                allAccounts.add(useraccount);
+            }
+            filterAccounts(searchEdit.getText().toString());
+        });
+    }
+
+    @Override
+    public void onCmdUserAccountRemove(UserAccount useraccount) {
+        if (useraccount == null || useraccount.szUsername == null) return;
+        runOnUiThread(() -> {
+            boolean removed = false;
+            for (int i = 0; i < allAccounts.size(); i++) {
+                if (useraccount.szUsername.equalsIgnoreCase(allAccounts.get(i).szUsername)) {
+                    allAccounts.remove(i);
+                    removed = true;
+                    break;
+                }
+            }
+            if (removed) {
+                filterAccounts(searchEdit.getText().toString());
+            }
+        });
+    }
+
+    private void filterAccounts(String query) {
+        filteredAccounts.clear();
+        if (query == null || query.isEmpty()) {
+            filteredAccounts.addAll(allAccounts);
+        } else {
+            String q = query.toLowerCase();
+            for (UserAccount acc : allAccounts) {
+                if ((acc.szUsername != null && acc.szUsername.toLowerCase().contains(q)) ||
+                    (acc.szNote != null && acc.szNote.toLowerCase().contains(q))) {
+                    filteredAccounts.add(acc);
+                }
+            }
+        }
+
+        Collections.sort(filteredAccounts, (u1, u2) -> {
+            String n1 = (u1.szUsername == null) ? "" : u1.szUsername;
+            String n2 = (u2.szUsername == null) ? "" : u2.szUsername;
+            return isAscending ? n1.compareToIgnoreCase(n2) : n2.compareToIgnoreCase(n1);
+        });
+
+        adapter.notifyDataSetChanged();
+    }
+
+    private void showAccountOptions(UserAccount account) {
+        String[] options = {
+            getString(R.string.action_account_properties),
+            getString(R.string.action_edit),
+            getString(R.string.action_export_tt),
+            getString(R.string.action_delete),
+        };
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(getString(R.string.title_options_for, account.szUsername))
+                .setItems(options, (dialog, which) -> handleAccountOption(account, which))
+                .show();
+    }
+
+    private void handleAccountOption(UserAccount account, int which) {
+        if (which == 0 || which == 1) {
+            Intent intent = new Intent(this, UserAccountEditActivity.class);
+            intent.putExtra(UserAccountEditActivity.EXTRA_IS_VIEW, which == 0);
+            intent.putExtra(UserAccountEditActivity.EXTRA_IS_EDIT, which == 1);
+            intent.putExtra(UserAccountEditActivity.EXTRA_USERNAME, account.szUsername);
+            intent.putExtra(UserAccountEditActivity.EXTRA_PASSWORD, account.szPassword);
+            intent.putExtra(UserAccountEditActivity.EXTRA_USERTYPE, account.uUserType);
+            intent.putExtra(UserAccountEditActivity.EXTRA_USERRIGHTS, account.uUserRights);
+            intent.putExtra(UserAccountEditActivity.EXTRA_NOTE, account.szNote);
+            intent.putExtra(UserAccountEditActivity.EXTRA_INIT_CHANNEL, account.szInitChannel);
+            intent.putExtra(UserAccountEditActivity.EXTRA_OPERATOR_CHANNELS, account.autoOperatorChannels);
+            startActivity(intent);
+        } else if (which == 2) {
+            exportAccountTT(account);
+        } else if (which == 3) {
+            confirmDelete(account);
+        }
+    }
+
+    private void exportAccountTT(UserAccount account) {
+        if (account == null) return;
+
+        String defaultName = (account.szUsername != null && !account.szUsername.trim().isEmpty())
+                ? account.szUsername.trim().replaceAll("[\\\\/:*?\"<>|\\r\\n\\t]", "_").trim()
+                : "account";
+        if (defaultName.isEmpty()) {
+            defaultName = "account";
+        }
+
+        final EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(defaultName);
+        input.setSelection(input.getText().length());
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.action_export_tt)
+                .setMessage(R.string.title_export_tt_filename)
+                .setView(ThemeHelper.wrapForDialog(input, this))
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    String chosenName = input.getText().toString().trim();
+                    chosenName = chosenName.replaceAll("[\\\\/:*?\"<>|\\r\\n\\t]", "_").trim();
+                    if (chosenName.isEmpty()) {
+                        chosenName = "account";
+                    }
+                    if (chosenName.toLowerCase().endsWith(".tt")) {
+                        chosenName = chosenName.substring(0, chosenName.length() - 3);
+                    }
+                    performExportAccountTT(account, chosenName + ".tt");
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void performExportAccountTT(UserAccount account, String fileName) {
+        TeamTalkService service = mConnection != null ? mConnection.getService() : null;
+        ServerEntry currentServer = service != null ? service.getServerEntry() : null;
+
+        ServerEntry exportEntry = new ServerEntry();
+        if (currentServer != null) {
+            exportEntry.servername = currentServer.servername;
+            exportEntry.ipaddr = currentServer.ipaddr;
+            exportEntry.tcpport = currentServer.tcpport;
+            exportEntry.udpport = currentServer.udpport;
+            exportEntry.encrypted = currentServer.encrypted;
+        } else {
+            dk.bearware.ServerProperties srvProps = new dk.bearware.ServerProperties();
+            if (getClient() != null && getClient().getServerProperties(srvProps)) {
+                exportEntry.servername = srvProps.szServerName;
+            } else {
+                exportEntry.servername = "TeamTalk Server";
+            }
+        }
+        exportEntry.username = account.szUsername != null ? account.szUsername : "";
+        exportEntry.password = account.szPassword != null ? account.szPassword : "";
+        exportEntry.nickname = account.szUsername != null ? account.szUsername : "";
+        exportEntry.channel = account.szInitChannel != null ? account.szInitChannel : "";
+
+        File dirPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (!dirPath.exists()) {
+            dirPath.mkdirs();
+        }
+        File exportFile = new File(dirPath, fileName);
+
+        Vector<ServerEntry> list = new Vector<>();
+        list.add(exportEntry);
+        boolean success = Utils.saveServers(list, exportFile.getAbsolutePath());
+        if (success) {
+            Toast.makeText(this, getString(R.string.server_export_confirmation, exportFile.getAbsolutePath()), Toast.LENGTH_LONG).show();
+            try {
+                Uri fileUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", exportFile);
+                Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                shareIntent.setType("application/octet-stream");
+                shareIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
+                shareIntent.putExtra(Intent.EXTRA_SUBJECT, exportFile.getName());
+                shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(shareIntent, getString(R.string.action_export_tt)));
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to share .tt file", e);
+            }
+        } else {
+            Toast.makeText(this, R.string.err_file_write, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void confirmDelete(UserAccount account) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.dialog_confirm_delete)
+                .setMessage(getString(R.string.msg_confirm_delete_account, account.szUsername))
+                .setPositiveButton(android.R.string.yes, (dialog, which) -> {
+                    TeamTalkBase client = getClient();
+                    if (client != null && account.szUsername != null) {
+                        client.doDeleteUserAccount(account.szUsername);
+                    }
+                    allAccounts.remove(account);
+                    filterAccounts(searchEdit.getText().toString());
+                })
+                .setNegativeButton(android.R.string.no, null)
+                .show();
+    }
+
+    @Override
+    public boolean onSupportNavigateUp() {
+        finish();
+        return true;
+    }
+
+    private class UserAccountAdapter extends ArrayAdapter<UserAccount> {
+        public UserAccountAdapter(Context context, List<UserAccount> accounts) {
+            super(context, android.R.layout.simple_list_item_2, accounts);
+        }
+
+        private class ViewHolder {
+            TextView text1;
+            TextView text2;
+        }
+
+        @NonNull
+        @Override
+        public View getView(int position, View convertView, @NonNull ViewGroup parent) {
+            ViewHolder holder;
+            if (convertView == null) {
+                convertView = LayoutInflater.from(getContext()).inflate(android.R.layout.simple_list_item_2, parent, false);
+                holder = new ViewHolder();
+                holder.text1 = convertView.findViewById(android.R.id.text1);
+                holder.text2 = convertView.findViewById(android.R.id.text2);
+                convertView.setTag(holder);
+            } else {
+                holder = (ViewHolder) convertView.getTag();
+            }
+            UserAccount account = getItem(position);
+
+            if (account != null) {
+                String displayName = account.szUsername;
+                if (displayName == null || displayName.trim().isEmpty()) {
+                    displayName = getContext().getString(R.string.anonymous_account);
+                }
+                holder.text1.setText(displayName);
+
+                StringBuilder details = new StringBuilder();
+                if ((account.uUserType & UserType.USERTYPE_ADMIN) == UserType.USERTYPE_ADMIN) {
+                    details.append(getContext().getString(R.string.user_type_admin));
+                } else {
+                    details.append(getContext().getString(R.string.user_type_default));
+                }
+                if (account.szLastModified != null && !account.szLastModified.isEmpty()) {
+                    details.append(" | ").append(getContext().getString(R.string.last_modified, account.szLastModified));
+                }
+                if (account.szNote != null && !account.szNote.isEmpty()) {
+                    details.append("\n").append(account.szNote);
+                } else {
+                    details.append("\n").append(getContext().getString(R.string.no_note));
+                }
+                holder.text2.setText(details.toString());
+            }
+            return convertView;
+        }
+    }
+}

@@ -1,0 +1,154 @@
+/*
+ * Copyright (c) 2005-2018, BearWare.dk
+ * 
+ * Contact Information:
+ *
+ * Bjoern D. Rasmussen
+ * Kirketoften 5
+ * DK-8260 Viby J
+ * Denmark
+ * Email: contact@bearware.dk
+ * Phone: +45 20 20 54 59
+ * Web: http://www.bearware.dk
+ *
+ * This source code is part of the TeamTalk SDK owned by
+ * BearWare.dk. Use of this file, or its compiled unit, requires a
+ * TeamTalk SDK License Key issued by BearWare.dk.
+ *
+ * The TeamTalk SDK License Agreement along with its Terms and
+ * Conditions are outlined in the file License.txt included with the
+ * TeamTalk SDK distribution.
+ *
+ */
+
+package org.teamtalkextro.data;
+
+public class Preferences {
+
+    //duplicates of pref_connection.xml (isn't there an easier way to do this??)
+    public static final String 
+            PREF_GENERAL_NICKNAME = "nickname_text",
+            PREF_GENERAL_STATUSMSG = "statusmsg_text",
+            PREF_GENERAL_SHOWUSERNAMES = "showusernames_checkbox",
+            PREF_GENERAL_OFFICIALSERVERS = "showofficialservers_checkbox",
+            PREF_GENERAL_UNOFFICIALSERVERS = "showunofficialservers_checkbox",
+            PREF_GENERAL_BEARWARE_CHECKED = "bearwareid_checkbox",
+            PREF_GENERAL_BEARWARE_USERNAME = "bearware_username",
+            PREF_GENERAL_BEARWARE_TOKEN = "bearware_token",
+            PREF_GENERAL_BEARWARE_ACCOUNTS_JSON = "bearware_accounts_json",
+            PREF_GENERAL_BEARWARE_ACTIVE_USERNAME = "bearware_active_username",
+            PREF_GENERAL_GENDER = "gender_checkbox",
+            PREF_GENERAL_CLIENTNAME = "clientname_text",
+            PREF_GENERAL_LANGUAGE = "app_language",
+            PREF_GENERAL_DEFAULT_FILE_MANAGER = "default_file_manager",
+            PREF_STREAM_RESOLVER_URL = "pref_stream_resolver_url";
+    public static final String
+            PREF_SOUNDSYSTEM_MEDIAFILE_VOLUME = "mediafilevolume_seekbar",
+            PREF_SOUNDSYSTEM_VOICEACTIVATION_LEVEL = "voice_activation_level",
+            PREF_SOUNDSYSTEM_VOICEACTIVATION_STOP_DELAY = "voice_activation_stop_delay",
+            PREF_SOUNDSYSTEM_MASTERVOLUME = "mastervolume",
+            PREF_SOUNDSYSTEM_MICROPHONEGAIN = "microphonegain",
+            PREF_SOUNDSYSTEM_MUTE_ON_TRANSMISSION = "mute_speakers_on_tx_checkbox",
+            PREF_SOUNDSYSTEM_SPEAKERPHONE = "speakerphone_checkbox",
+            PREF_SOUNDSYSTEM_BLUETOOTH_HEADSET = "bluetooth_headset_checkbox",
+            PREF_SOUNDSYSTEM_VOICEPROCESSING = "voiceprocessing_checkbox",
+            PREF_SOUNDSYSTEM_EXPERIMENTAL_CAPTURE_MODE = "experimental_capture_mode",
+            PREF_SOUNDSYSTEM_EXPERIMENTAL_INPUT_DEVICE = "experimental_input_device",
+            PREF_SOUNDSYSTEM_MIC_ENHANCEMENTS = "mic_enhancements_checkbox",
+            PREF_SCREENSHARE_AUDIO_MODE = "screenshare_audio_mode",
+            PREF_INTERNAL_AUDIO_GAIN = "internal_audio_gain_seekbar",
+            PREF_VOICE_CHANGER_MODE = "voice_changer_mode",
+            PREF_VOICE_ECHO_ENABLED = "voice_echo_enabled",
+            PREF_VOICE_ECHO_LEVEL = "voice_echo_level",
+            PREF_VOICE_REVERB_ENABLED = "voice_reverb_enabled",
+            PREF_VOICE_REVERB_LEVEL = "voice_reverb_level",
+            PREF_VOICE_REVERB_ROOM_SIZE = "voice_reverb_room_size",
+            PREF_SOUNDSYSTEM_INPUT_SOURCE = "audio_input_source",
+            PREF_EQ_ENABLED = "eq_enabled",
+            PREF_EQ_DSP_ENGINE = "eq_dsp_engine",
+            PREF_EQ_MIC_NS = "eq_mic_ns",
+            PREF_EQ_MIC_NS_LEVEL = "eq_mic_ns_level",
+            PREF_EQ_MIC_SPEEX_NS_DB = "eq_mic_speex_ns_db",
+            PREF_EQ_MIC_AEC = "eq_mic_aec",
+            PREF_EQ_MIC_SPEEX_AEC_DB = "eq_mic_speex_aec_db",
+            PREF_EQ_MIC_AGC = "eq_mic_agc",
+            PREF_EQ_MIC_AGC_MODE = "eq_mic_agc_mode",
+            PREF_EQ_MIC_AGC_FIXED_GAIN = "eq_mic_agc_fixed_gain",
+            PREF_EQ_MIC_AGC_MAX_GAIN = "eq_mic_agc_max_gain",
+            PREF_EQ_MIC_AGC_HEADROOM = "eq_mic_agc_headroom",
+            PREF_EQ_MIC_PREAMP_ENABLE = "eq_mic_preamp_enable",
+            PREF_EQ_MIC_PREAMP_GAIN = "eq_mic_preamp_gain",
+            PREF_EQ_MIC_HW_EFFECTS = "eq_mic_hw_effects",
+            PREF_EQ_MIC_SPEEX_AGC_LEVEL = "eq_mic_speex_agc_level",
+            PREF_EQ_MIC_SPEEX_AGC_MAX_GAIN = "eq_mic_speex_agc_max_gain",
+            PREF_EQ_MIC_HPF = "eq_mic_hpf",
+            PREF_EQ_MIC_BAND_COUNT = "eq_mic_band_count",
+            PREF_EQ_MIC_BAND_PREFIX = "eq_mic_band_",
+            PREF_SOUNDSYSTEM_DUCKING_ENABLED = "audio_ducking_enabled",
+            PREF_SOUNDSYSTEM_DUCKING_LEVEL = "audio_ducking_level",
+            PREF_SOUNDSYSTEM_DUCKING_TRIGGER = "audio_ducking_trigger";
+    public static final String
+            PREF_JOIN_ROOT_CHAN = "auto_join_root_checkbox",
+            PREF_CONNECTION_SEAMLESS_RECONNECT = "seamless_reconnect",
+            PREF_CONNECTION_HEAR_MYSELF = "hear_myself_checkbox",
+            PREF_SUB_TEXTMESSAGE = "sub_txtmsg_checkbox",
+            PREF_SUB_CHANMESSAGE = "sub_chanmsg_checkbox",
+            PREF_SUB_BCAST_MESSAGES = "sub_bcastmsg_checkbox",
+            PREF_SUB_VOICE = "sub_voice_checkbox",
+            PREF_SUB_VIDCAP = "sub_video_checkbox",
+            PREF_SUB_DESKTOP = "sub_desktop_checkbox",
+            PREF_SUB_MEDIAFILE = "sub_mediafile_checkbox";
+
+    public static final String
+            PREF_ANTISPAM_ENABLED = "antispam_enabled",
+            PREF_ANTISPAM_MSG_LIMIT = "antispam_msg_limit",
+            PREF_ANTISPAM_UNSUB_ALL = "antispam_unsub_all",
+            PREF_ANTISPAM_IGNORE_ENABLED = "antispam_ignore_enabled",
+            PREF_ANTISPAM_IGNORE_LIST = "antispam_ignore_list",
+            PREF_ANTISPAM_IGNORE_UNSUB = "antispam_ignore_unsub",
+            PREF_ANTISPAM_WHITELIST = "antispam_whitelist",
+            PREF_ANTISPAM_AUTO_IGNORE = "antispam_auto_ignore",
+            PREF_ANTISPAM_PER_USER_LIMIT = "antispam_per_user_limit",
+            PREF_ANTISPAM_DUPLICATE_LIMIT = "antispam_duplicate_limit",
+            PREF_ANTISPAM_BLOCK_LINKS = "antispam_block_links",
+            PREF_ANTISPAM_BLOCK_CAPS = "antispam_block_caps";
+
+    public static final String
+            PREF_BG_MGMT_ENABLED = "bg_mgmt_enabled",
+            PREF_BG_MGMT_SHOW_VOICE = "bg_mgmt_show_voice",
+            PREF_BG_MGMT_SHOW_MUTE = "bg_mgmt_show_mute",
+            PREF_BG_MGMT_SHOW_PING = "bg_mgmt_show_ping",
+            PREF_BG_MGMT_SHOW_CHAT = "bg_mgmt_show_chat",
+            PREF_BG_MGMT_SHOW_CHANNELS = "bg_mgmt_show_channels",
+            PREF_BG_MGMT_SHOW_SERVERS = "bg_mgmt_show_servers",
+            PREF_BG_MGMT_DISPLAY_TYPE = "bg_mgmt_display_type",
+            PREF_BG_MGMT_CLOSE_ON_APP_OPEN = "bg_mgmt_close_on_app_open";
+
+    public static final String
+            PREF_RECORDING_FORMAT = "recording_format",
+            PREF_RECORDING_MP3_BITRATE = "recording_mp3_bitrate",
+            PREF_RECORDING_PATH = "recording_path",
+            PREF_RECORDING_CREATE_SERVER_FOLDER = "recording_create_server_folder",
+            PREF_RECORDING_SESSION_MODE = "recording_session_mode",
+            PREF_RECORDING_SILENCE_PAUSE = "recording_silence_pause",
+            PREF_RECORDING_MULTITRACK = "recording_multitrack",
+            PREF_RECORDING_SHOW_DIALOG = "recording_show_dialog_after",
+            PREF_RECORDING_SHOW_TOAST = "recording_show_toast_notifications",
+            PREF_RECORDING_AUTO = "auto_record_conversations";
+
+    public static final String
+            PREF_DISPLAY_ACCENT_COLOR = "accent_color_preference",
+            PREF_DISPLAY_DYNAMIC_COLOR = "dynamic_color_enabled",
+            PREF_DISPLAY_SHOW_MIC_ACTIVITY = "display_show_mic_activity",
+            PREF_DISPLAY_SHOW_PING_NO_SERVER = "display_show_ping_no_server",
+            PREF_DISPLAY_SHOW_ROOT_USERS = "display_show_root_users",
+            PREF_DISPLAY_SHOW_ROOT_SERVER_BACK_BTN = "display_show_root_server_back_btn",
+            PREF_DISPLAY_SHOW_USER_QUICK_ACTIONS = "display_show_user_quick_actions",
+            PREF_DISPLAY_QUICK_KICK_SRV = "display_quick_kick_srv",
+            PREF_DISPLAY_QUICK_BAN_SRV = "display_quick_ban_srv",
+            PREF_DISPLAY_QUICK_KICK_CHAN = "display_quick_kick_chan",
+            PREF_DISPLAY_QUICK_BAN_CHAN = "display_quick_ban_chan";
+
+    public static final String PREF_WELCOME_SHOWN = "welcome_shown";
+    public static final String PREF_IGNORED_UPDATE_VERSION = "ignored_update_version";
+}

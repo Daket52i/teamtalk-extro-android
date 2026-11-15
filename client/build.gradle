@@ -4,7 +4,7 @@ plugins {
 
 android {
     enableKotlin = false
-    namespace = 'org.nekit.ttproplus'
+    namespace = 'org.teamtalkextro'
     compileSdk {
         version = release(36)
     }
@@ -12,12 +12,12 @@ android {
     ndkVersion = '29.0.14206865'
 
     defaultConfig {
-        applicationId = 'org.nekit.ttproplus'
+        applicationId = 'org.teamtalkextro'
         minSdk = 21
         targetSdk = 36
-        versionCode = 448
+        versionCode = 500
         // Single source of truth: the value is also injected into TeamTalk client name.
-        versionName = '5.29.3'
+        versionName = '5.30.0'
 
         testInstrumentationRunner = 'androidx.test.runner.AndroidJUnitRunner'
     }

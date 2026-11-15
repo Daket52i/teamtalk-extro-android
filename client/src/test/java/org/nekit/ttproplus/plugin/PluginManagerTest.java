@@ -1,4 +1,4 @@
-package org.nekit.ttproplus.plugin;
+package org.teamtalkextro.plugin;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
