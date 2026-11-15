@@ -312,6 +312,7 @@ public final class KaraokeMixer {
             boolean inputDone = false;
             float[] converted = new float[8192];
             float[] channelBuf = new float[8192];
+            short[] pcm = new short[8192];
             float[] out = new float[4096];
 
             while (this.running) {
@@ -348,7 +349,13 @@ public final class KaraokeMixer {
                             if (channelBuf.length < samples) {
                                 channelBuf = new float[samples];
                             }
-                            shorts.get(converted, 0, samples);
+                            if (pcm.length < samples) {
+                                pcm = new short[samples];
+                            }
+                            shorts.get(pcm, 0, samples);
+                            for (int i = 0; i < samples; i++) {
+                                converted[i] = pcm[i];
+                            }
                             int framed = channelMixer.convert(converted, samples, channelBuf);
                             resampler.push(channelBuf, framed);
                             if (this.ringFull()) {
