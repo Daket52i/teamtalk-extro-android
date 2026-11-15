@@ -604,10 +604,14 @@ public final class ExperimentalAudioCapture {
             return;
         }
         mixer.read(karaokeBuf, 0, length);
+        // Leave headroom for the voice. A mastering-level minus summed with a
+        // sung note sits above the limiter knee the whole time, which is heard
+        // as constant overload on the listener side.
+        final float minusLevel = 0.75f;
         for (int i = 0; i + 1 < length; i += 2) {
             short mic = (short) ((micBuf[i] & 255) | ((micBuf[i + 1] & 255) << 8));
             short minus = (short) ((karaokeBuf[i] & 255) | ((karaokeBuf[i + 1] & 255) << 8));
-            short result = VoiceChanger.clampToShort(mic + minus);
+            short result = VoiceChanger.clampToShort(mic + minus * minusLevel);
             micBuf[i] = (byte) (result & 255);
             micBuf[i + 1] = (byte) ((result >> 8) & 255);
         }

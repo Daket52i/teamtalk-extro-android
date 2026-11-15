@@ -3,13 +3,13 @@ package org.teamtalkextro.backend;
 import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
-import android.os.Build;
 import android.util.Log;
 
 import java.io.IOException;
@@ -24,11 +24,17 @@ import java.nio.ShortBuffer;
  *
  * Decoding is streaming (MediaExtractor + MediaCodec) into a small ring buffer;
  * nothing is loaded into memory whole, so hour-long tracks are fine.
+ *
+ * The track is played exactly once: at end of stream the decoder stops and the
+ * ring is drained, so the song never restarts on its own and never loops with
+ * an audible click. The local monitor (what the singer hears) is fed from the
+ * same ring read that feeds the outgoing mix, so both stay sample-aligned.
  */
 public final class KaraokeMixer {
 
     private static final String TAG = "KaraokeMixer";
     private static final int RING_SECONDS = 2;
+    private static final int PREROLL_MS = 150;
     private static final int DECODE_TIMEOUT_US = 10000;
 
     private final Context context;
@@ -37,6 +43,8 @@ public final class KaraokeMixer {
     private volatile boolean running;
     private volatile boolean paused;
     private volatile boolean eos;
+    private volatile boolean drainRequested;
+    private volatile boolean primed;
     private volatile int targetSampleRate = 48000;
     private volatile int targetChannels = 1;
     private volatile float gain = 1.0f;
@@ -48,7 +56,7 @@ public final class KaraokeMixer {
     private int ringCount;
 
     private Thread decodeThread;
-    private AudioTrack monitor;
+    private volatile AudioTrack monitor;
     private Uri source;
 
     public KaraokeMixer(Context context) {
@@ -76,13 +84,15 @@ public final class KaraokeMixer {
     }
 
     public void setGain(float value) {
-        this.gain = Math.max(0f, Math.min(2f, value));
+        this.gain = Math.max(0f, Math.min(1f, value));
     }
 
     public void setMonitorEnabled(boolean enabled) {
         this.monitorEnabled = enabled;
         if (!enabled) {
             releaseMonitor();
+        } else if (this.running) {
+            ensureMonitor();
         }
     }
 
@@ -100,6 +110,8 @@ public final class KaraokeMixer {
         this.targetChannels = channels;
         this.paused = false;
         this.eos = false;
+        this.drainRequested = false;
+        this.primed = false;
         synchronized (this.ringLock) {
             this.ring = new short[Math.max(sampleRate * RING_SECONDS * channels, 4096)];
             this.ringWrite = 0;
@@ -107,6 +119,9 @@ public final class KaraokeMixer {
         }
         this.title = readTitle(uri);
         this.running = true;
+        if (this.monitorEnabled) {
+            ensureMonitor();
+        }
         this.decodeThread = new Thread(this::decodeLoop, "KaraokeDecode");
         this.decodeThread.start();
     }
@@ -129,6 +144,8 @@ public final class KaraokeMixer {
         }
         releaseMonitor();
         this.eos = false;
+        this.drainRequested = false;
+        this.primed = false;
         this.source = null;
         this.title = "";
     }
@@ -151,8 +168,19 @@ public final class KaraokeMixer {
         if (samples <= 0) {
             return;
         }
+
         int got = 0;
         synchronized (this.ringLock) {
+            // Do not start the song with a half-empty buffer: the first frames
+            // would be silence and the voice would arrive before the track.
+            if (!this.primed) {
+                int preroll = Math.min(this.targetSampleRate * PREROLL_MS / 1000 * this.targetChannels,
+                        this.ring.length / 2);
+                if (this.paused || (this.ringCount < preroll && !this.drainRequested)) {
+                    return;
+                }
+                this.primed = true;
+            }
             int available = Math.min(samples, this.ringCount);
             int readPos = this.ringWrite - this.ringCount;
             if (readPos < 0) {
@@ -160,8 +188,7 @@ public final class KaraokeMixer {
             }
             for (int i = 0; i < available; i++) {
                 short s = this.ring[readPos];
-                float v = s * this.gain;
-                short out = VoiceChanger.clampToShort(v);
+                short out = VoiceChanger.clampToShort(s * this.gain);
                 dst[offset + i * 2] = (byte) (out & 255);
                 dst[offset + i * 2 + 1] = (byte) ((out >> 8) & 255);
                 readPos++;
@@ -172,13 +199,16 @@ public final class KaraokeMixer {
             this.ringCount -= available;
             got = available;
         }
+
         if (!this.monitorEnabled || this.paused) {
             return;
         }
-        AudioTrack track = ensureMonitor();
+        AudioTrack track = this.monitor;
         if (track != null && got > 0) {
             try {
-                track.write(dst, offset, got * 2, AudioTrack.WRITE_NON_BLOCKING);
+                // Always hand the full frame to the track; the tail is already
+                // zeroed, which keeps the monitor clock steady on underrun.
+                track.write(dst, offset, samples * 2, AudioTrack.WRITE_NON_BLOCKING);
             } catch (Throwable t) {
                 Log.w(TAG, "monitor write failed", t);
             }
@@ -198,19 +228,18 @@ public final class KaraokeMixer {
             min = this.targetSampleRate * channels;
         }
         try {
-            AudioTrack created = new AudioTrack.Builder()
-                    .setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build())
-                    .setAudioFormat(new AudioFormat.Builder()
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setSampleRate(this.targetSampleRate)
-                            .setChannelMask(channelMask)
-                            .build())
-                    .setBufferSizeInBytes(min * 2)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
+            // minSdk is 21, so no AudioTrack.Builder (API 23) here.
+            AudioAttributes attrs = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build();
+            AudioFormat fmt = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(this.targetSampleRate)
+                    .setChannelMask(channelMask)
+                    .build();
+            AudioTrack created = new AudioTrack(attrs, fmt, min * 2,
+                    AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE);
             created.play();
             this.monitor = created;
             return created;
@@ -256,22 +285,42 @@ public final class KaraokeMixer {
     }
 
     private void decodeLoop() {
+        boolean failed = false;
         try {
             processMedia();
         } catch (Throwable t) {
+            failed = true;
             Log.e(TAG, "karaoke decode failed", t);
-        } finally {
-            if (!this.running) {
+        }
+        if (!this.running) {
+            return;
+        }
+        if (failed) {
+            this.eos = true;
+            releaseMonitor();
+            return;
+        }
+        // The decoder is done, but up to RING_SECONDS of audio may still sit in
+        // the ring. Let the capture loop play it out before reporting the end,
+        // otherwise the last seconds of every song are cut.
+        this.drainRequested = true;
+        while (this.running && ringCountLocked() > 0) {
+            try {
+                Thread.sleep(50L);
+            } catch (InterruptedException e) {
                 return;
             }
-            this.eos = true;
-            while (this.running) {
-                try {
-                    Thread.sleep(200L);
-                } catch (InterruptedException e) {
-                    return;
-                }
-            }
+        }
+        if (!this.running) {
+            return;
+        }
+        this.eos = true;
+        releaseMonitor();
+    }
+
+    private int ringCountLocked() {
+        synchronized (this.ringLock) {
+            return this.ringCount;
         }
     }
 
@@ -343,11 +392,15 @@ public final class KaraokeMixer {
                             outBuf.limit(info.offset + info.size);
                             ShortBuffer shorts = outBuf.order(ByteOrder.nativeOrder()).asShortBuffer();
                             int samples = shorts.remaining();
+                            // Mono source into a stereo target doubles the
+                            // sample count, so size the channel buffer for
+                            // the converted length, not the source length.
+                            int dstSamples = samples / srcChannels * this.targetChannels;
                             if (converted.length < samples) {
                                 converted = new float[samples];
                             }
-                            if (channelBuf.length < samples) {
-                                channelBuf = new float[samples];
+                            if (channelBuf.length < dstSamples) {
+                                channelBuf = new float[dstSamples];
                             }
                             if (pcm.length < samples) {
                                 pcm = new short[samples];
@@ -358,25 +411,25 @@ public final class KaraokeMixer {
                             }
                             int framed = channelMixer.convert(converted, samples, channelBuf);
                             resampler.push(channelBuf, framed);
-                            if (this.ringFull()) {
-                                sleepQuiet(10L);
-                            } else {
-                                int produced = resampler.pull(out, out.length / this.targetChannels);
-                                if (produced > 0) {
-                                    writeToRing(out, produced * this.targetChannels);
-                                }
+                            int produced = resampler.pull(out, out.length / this.targetChannels);
+                            if (produced > 0) {
+                                writeToRing(out, produced * this.targetChannels);
                             }
                         }
                     }
                     codec.releaseOutputBuffer(outIndex, false);
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                        // Loop the backing track from the top.
-                        extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC);
-                        codec.flush();
-                        codec.start();
-                        inputDone = false;
-                        resampler.reset();
+                        // The backing track plays exactly once. Restarting the
+                        // decoder here made the song loop and click on every
+                        // restart, which sounded like a distorted repeat.
+                        break;
                     }
+                }
+
+                // Keep the ring close to full; when it is there is nothing to
+                // do but wait for the capture thread to drain it.
+                if (ringFull()) {
+                    sleepQuiet(10L);
                 }
             }
         } finally {
@@ -408,7 +461,14 @@ public final class KaraokeMixer {
             int capacity = this.ring.length;
             int space = capacity - this.ringCount;
             if (space <= 0) {
-                return;
+                // Latency is bounded: drop the oldest audio instead of new
+                // frames, so playback stays current rather than lagging behind.
+                int drop = Math.min(count, capacity / 2);
+                this.ringCount -= drop;
+                if (this.ringCount < 0) {
+                    this.ringCount = 0;
+                }
+                space = capacity - this.ringCount;
             }
             int n = Math.min(count, space);
             for (int i = 0; i < n; i++) {
