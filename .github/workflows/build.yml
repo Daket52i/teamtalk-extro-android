@@ -36,9 +36,9 @@ jobs:
 
       - name: Compute version
         run: |
-          VERSION_NAME=$(grep -m1 'versionName' client/build.gradle | sed -E 's/.*"([^"]+)".*/\1/')
+          VERSION_NAME=$(grep -m1 'versionName' client/build.gradle | sed -E "s/.*['\"]([^'\"]+)['\"].*/\1/" | tr -d '[:space:]')
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
-          echo "RELEASE_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', '') }}$VERSION_NAME" >> $GITHUB_ENV
+          echo "RELEASE_TAG=v$VERSION_NAME" >> $GITHUB_ENV
 
       - name: Grant execute permission for gradlew
         run: chmod +x client/gradlew
@@ -70,21 +70,28 @@ jobs:
             **/build/outputs/logs/
           if-no-files-found: ignore
 
+      - name: Brand APK names
+        run: |
+          mkdir -p dist
+          for f in client/build/outputs/apk/release/*.apk client/build/outputs/apk/debug/*.apk; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            newname=$(echo "$base" | sed "s/^TeamTalkAndroid/TeamTalkExtro-${VERSION_NAME}/")
+            cp "$f" "dist/$newname"
+          done
+          ls -la dist
+
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: TeamTalkExtro-APK
-          path: |
-            client/build/outputs/apk/release/*.apk
-            client/build/outputs/apk/debug/*.apk
-            client/build/outputs/apk/**/*.apk
+          path: dist/*.apk
           if-no-files-found: warn
 
       - name: Archive Source Code
         run: |
-          TAG_NAME="${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || env.VERSION_NAME }}"
-          git archive --format=zip --output=TeamTalkExtro-${TAG_NAME}-source.zip HEAD
+          git archive --format=zip --output=TeamTalkExtro-${RELEASE_TAG}-source.zip HEAD
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -96,8 +103,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            client/build/outputs/apk/release/*.apk
-            client/build/outputs/apk/debug/*.apk
+            dist/*.apk
             tests/output/*.jar
             TeamTalkExtro-*-source.zip
         env:

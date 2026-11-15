@@ -31,6 +31,7 @@ import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import com.google.android.material.materialswitch.MaterialSwitch;
+import org.teamtalkextro.backend.KaraokeMixer;
 import org.teamtalkextro.backend.VoiceChanger;
 import org.teamtalkextro.data.ScreenShareAudioHelper;
 import org.teamtalkextro.utils.ScreenShareManager;
@@ -520,6 +521,11 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             voiceChangerItem.setEnabled(true).setVisible(true);
         }
 
+        MenuItem karaokeItem = menu.findItem(R.id.action_karaoke);
+        if (karaokeItem != null) {
+            karaokeItem.setEnabled(isLeaveable).setVisible(true);
+        }
+
         MenuItem shareScreenItem = menu.findItem(R.id.action_share_screen);
         if (shareScreenItem != null) {
             boolean sharing = getService() != null && getService().isScreenSharingActive();
@@ -543,6 +549,9 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         int itemId = item.getItemId();
         if (itemId == R.id.action_voice_changer) {
             showVoiceChangerDialog();
+            return true;
+        } else if (itemId == R.id.action_karaoke) {
+            handleKaraokeAction();
             return true;
         } else if (itemId == R.id.action_share_screen) {
             handleScreenShareAction();
@@ -1329,6 +1338,17 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             copyFileAndUploadAsync(uri);
             return;
         }
+        if (requestCode == REQUEST_KARAOKE_PICK) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                Uri uri = data.getData();
+                try {
+                    getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } catch (Throwable ignored) {
+                }
+                startKaraokeWithUri(uri);
+            }
+            return;
+        }
         if (requestCode == REQUEST_MEDIA_PROJECTION) {
             if (resultCode == RESULT_OK && data != null && getService() != null) {
                 if (Build.VERSION.SDK_INT >= 21) {
@@ -1366,6 +1386,120 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
     }
 
     private static final int REQUEST_MEDIA_PROJECTION = 2002;
+    private static final int REQUEST_KARAOKE_PICK = 2003;
+    private static final String PREF_KARAOKE_GAIN = "karaoke_gain";
+    private static final String PREF_KARAOKE_MONITOR = "karaoke_monitor";
+
+    private void handleKaraokeAction() {
+        TeamTalkService service = getService();
+        if (service == null) {
+            return;
+        }
+        if (service.isKaraokeActive()) {
+            showKaraokeControlDialog();
+            return;
+        }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("audio/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivityForResult(intent, REQUEST_KARAOKE_PICK);
+        } catch (Throwable t) {
+            Toast.makeText(this, R.string.karaoke_no_picker, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void startKaraokeWithUri(Uri uri) {
+        TeamTalkService service = getService();
+        if (service == null) {
+            return;
+        }
+        if (!service.startKaraoke(uri)) {
+            Toast.makeText(this, R.string.karaoke_start_failed, Toast.LENGTH_LONG).show();
+            return;
+        }
+        KaraokeMixer mixer = service.getKaraokeMixer();
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+        if (mixer != null) {
+            mixer.setGain(prefs.getInt(PREF_KARAOKE_GAIN, 100) / 100f);
+            mixer.setMonitorEnabled(prefs.getBoolean(PREF_KARAOKE_MONITOR, true));
+        }
+        Toast.makeText(this, R.string.karaoke_started, Toast.LENGTH_SHORT).show();
+        invalidateOptionsMenu();
+        showKaraokeControlDialog();
+    }
+
+    private void showKaraokeControlDialog() {
+        final TeamTalkService service = getService();
+        final KaraokeMixer mixer = service != null ? service.getKaraokeMixer() : null;
+        if (service == null || mixer == null) {
+            return;
+        }
+        final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        int pad = Math.round(24 * getResources().getDisplayMetrics().density);
+        layout.setPadding(pad, pad / 2, pad, 0);
+
+        TextView title = new TextView(this);
+        String trackTitle = mixer.getTitle();
+        title.setText(TextUtils.isEmpty(trackTitle) ? getString(R.string.karaoke_playing) : trackTitle);
+        title.setPadding(0, 0, 0, pad / 2);
+        layout.addView(title);
+
+        final TextView gainLabel = new TextView(this);
+        final SeekBar gainBar = new SeekBar(this);
+        gainBar.setMax(200);
+        int gainValue = prefs.getInt(PREF_KARAOKE_GAIN, 100);
+        gainBar.setProgress(gainValue);
+        gainLabel.setText(getString(R.string.karaoke_volume, gainValue));
+        layout.addView(gainLabel);
+        layout.addView(gainBar);
+
+        final MaterialSwitch monitorSwitch = new MaterialSwitch(this);
+        monitorSwitch.setText(R.string.karaoke_monitor);
+        monitorSwitch.setChecked(prefs.getBoolean(PREF_KARAOKE_MONITOR, true));
+        layout.addView(monitorSwitch);
+
+        gainBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                gainLabel.setText(getString(R.string.karaoke_volume, progress));
+                mixer.setGain(progress / 100f);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+                prefs.edit().putInt(PREF_KARAOKE_GAIN, seekBar.getProgress()).apply();
+            }
+        });
+        monitorSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            mixer.setMonitorEnabled(isChecked);
+            prefs.edit().putBoolean(PREF_KARAOKE_MONITOR, isChecked).apply();
+        });
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.karaoke_title)
+                .setView(layout)
+                .setPositiveButton(R.string.karaoke_stop, (dialog, which) -> {
+                    service.stopKaraoke();
+                    Toast.makeText(MainActivity.this, R.string.karaoke_stopped, Toast.LENGTH_SHORT).show();
+                    invalidateOptionsMenu();
+                })
+                .setNegativeButton(R.string.karaoke_choose_other, (dialog, which) -> {
+                    service.stopKaraoke();
+                    invalidateOptionsMenu();
+                    handleKaraokeAction();
+                })
+                .setNeutralButton(android.R.string.cancel, null)
+                .show();
+    }
 
     private void handleScreenShareAction() {
         if (getService() == null) return;

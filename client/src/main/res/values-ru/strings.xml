@@ -1348,6 +1348,17 @@
     <!-- Voice Changer & Effects -->
     <string name="voice_changer_title">Эффекты голоса</string>
     <string name="voice_changer_active">Активный эффект: %s</string>
+    <string name="karaoke_title">Караоке</string>
+    <string name="karaoke_choose_track">Выбрать минусовку</string>
+    <string name="karaoke_choose_other">Другая минусовка</string>
+    <string name="karaoke_playing">Минусовка</string>
+    <string name="karaoke_volume">Громкость минусовки: %1$d%%</string>
+    <string name="karaoke_monitor">Слышать минусовку у себя</string>
+    <string name="karaoke_stop">Стоп</string>
+    <string name="karaoke_started">Караоке включено — слушатели слышат микс</string>
+    <string name="karaoke_stopped">Караоке остановлено</string>
+    <string name="karaoke_start_failed">Не удалось начать караоке: сначала зайди в канал и разреши микрофон</string>
+    <string name="karaoke_no_picker">На устройстве нет выбора файлов</string>
     <string name="voice_effect_off">Обычный</string>
     <string name="voice_effect_echo">Эхо и реверберация</string>
     <string name="voice_effect_deep">Низкий голос (Бас)</string>

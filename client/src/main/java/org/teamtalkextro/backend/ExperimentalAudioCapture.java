@@ -50,6 +50,7 @@ public final class ExperimentalAudioCapture {
     private final Set<TeamTalkBase> ttclients = new CopyOnWriteArraySet<>();
     private final Object lock = new Object();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private KaraokeMixer karaokeMixer;
 
     private TeamTalkService service;
     private AudioRecord audioRecord;
@@ -315,6 +316,26 @@ public final class ExperimentalAudioCapture {
         MicEnhancement.setEnabled(enabled);
     }
 
+    /** Backing-track player mixed into the outgoing stream (karaoke). */
+    public synchronized KaraokeMixer karaoke() {
+        if (this.karaokeMixer == null) {
+            this.karaokeMixer = new KaraokeMixer(this.context);
+        }
+        return this.karaokeMixer;
+    }
+
+    public boolean isKaraokeActive() {
+        KaraokeMixer mixer = this.karaokeMixer;
+        return mixer != null && mixer.isActive();
+    }
+
+    public void stopKaraoke() {
+        KaraokeMixer mixer = this.karaokeMixer;
+        if (mixer != null) {
+            mixer.stop();
+        }
+    }
+
     public void setScreenShareAudioMode(int mode) {
         this.screenShareAudioMode = mode;
     }
@@ -447,6 +468,7 @@ public final class ExperimentalAudioCapture {
     }
 
     public void shutdown() {
+        stopKaraoke();
         stop(true);
     }
 
@@ -572,6 +594,25 @@ public final class ExperimentalAudioCapture {
         }
     }
 
+    /**
+     * Sums the backing track into the outgoing buffer. Runs after the voice
+     * effects so the minus is not pitch-shifted or equalized with the voice.
+     */
+    private void mixKaraoke(byte[] micBuf, byte[] karaokeBuf, int length) {
+        KaraokeMixer mixer = this.karaokeMixer;
+        if (mixer == null || !mixer.isActive() || mixer.isPaused()) {
+            return;
+        }
+        mixer.read(karaokeBuf, 0, length);
+        for (int i = 0; i + 1 < length; i += 2) {
+            short mic = (short) ((micBuf[i] & 255) | ((micBuf[i + 1] & 255) << 8));
+            short minus = (short) ((karaokeBuf[i] & 255) | ((karaokeBuf[i + 1] & 255) << 8));
+            short result = VoiceChanger.clampToShort(mic + minus);
+            micBuf[i] = (byte) (result & 255);
+            micBuf[i + 1] = (byte) ((result >> 8) & 255);
+        }
+    }
+
     private void runCaptureLoop(CaptureSession session) {
         try {
             Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
@@ -582,6 +623,7 @@ public final class ExperimentalAudioCapture {
         int frameBytes = session.frameSamples * session.channels * 2;
         byte[] micBuffer = new byte[frameBytes];
         byte[] internalBuffer = new byte[frameBytes];
+        byte[] karaokeBuffer = new byte[frameBytes];
         AudioBlock block = new AudioBlock();
 
         float internalGain = 0.3f;
@@ -650,8 +692,9 @@ public final class ExperimentalAudioCapture {
             long now = SystemClock.uptimeMillis();
             int screenMode = getEffectiveScreenShareAudioMode(session);
             boolean isStreamingOrSharing = (this.service != null && (this.service.isScreenSharingActive() || this.service.isStreamingMedia()));
+            boolean karaokeActive = isKaraokeActive();
 
-            if (session.voxEnabled && screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY && !isStreamingOrSharing) {
+            if (session.voxEnabled && screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY && !isStreamingOrSharing && !karaokeActive) {
                 int energy = computeEnergyLevel(micBuffer, frameBytes);
                 if (energy >= session.voxLevel) {
                     if (!transmitting) {
@@ -721,6 +764,7 @@ public final class ExperimentalAudioCapture {
                     VoiceChanger.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
                 }
                 applyGain(micBuffer, session.gainMultiplier);
+                mixKaraoke(micBuffer, karaokeBuffer, frameBytes);
 
                 block.nStreamID = session.streamId;
                 block.uStreamTypes = 1;

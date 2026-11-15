@@ -53,6 +53,9 @@
                 android:id="@+id/action_voice_changer"
                 android:title="@string/voice_changer_title"/>
             <item
+                android:id="@+id/action_karaoke"
+                android:title="@string/karaoke_title"/>
+            <item
                 android:id="@+id/action_share_screen"
                 android:title="@string/text_screenshare_start"/>
             <item

@@ -23,6 +23,7 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
+import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.content.pm.ServiceInfo;
 import android.os.Binder;
@@ -1953,6 +1954,63 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         if (isVoiceTransmitting() || isVoiceTransmissionEnabled() || isVoiceActivationEnabled()) {
             applyConfiguredInputDeviceSelection();
         }
+    }
+
+    private boolean karaokeAutoStartedCapture = false;
+
+    /**
+     * Starts karaoke: opens the backing track and mixes it into the outgoing
+     * voice stream. If the microphone is not open yet, opens it too.
+     */
+    public synchronized boolean startKaraoke(Uri uri) {
+        TeamTalkBase client = this.ttclient;
+        if (uri == null || client == null || client.getMyChannelID() <= 0) {
+            return false;
+        }
+        ExperimentalAudioCapture cap = this.experimentalAudioCapture;
+        boolean alreadyRunning = cap != null && cap.isActive();
+        if (!alreadyRunning) {
+            startVoiceCapture(false);
+            cap = this.experimentalAudioCapture;
+            this.karaokeAutoStartedCapture = cap != null && cap.isActive();
+        }
+        if (cap == null) {
+            return false;
+        }
+        int rate = cap.getActiveSampleRate();
+        int channels = cap.getActiveChannels();
+        if (rate <= 0) {
+            rate = getExperimentalPreferredSampleRate();
+        }
+        if (channels <= 0) {
+            channels = 1;
+        }
+        cap.karaoke().start(uri, rate, channels);
+        return cap.karaoke().isRunning();
+    }
+
+    public synchronized void stopKaraoke() {
+        ExperimentalAudioCapture cap = this.experimentalAudioCapture;
+        if (cap != null) {
+            cap.stopKaraoke();
+        }
+        if (this.karaokeAutoStartedCapture) {
+            this.karaokeAutoStartedCapture = false;
+            if (!this.experimentalVoiceTransmissionRequested && !this.voiceActivationRequested) {
+                stopExperimentalVoiceTransmission(true);
+                clearExperimentalAudioSessionModeIfIdle();
+            }
+        }
+    }
+
+    public boolean isKaraokeActive() {
+        ExperimentalAudioCapture cap = this.experimentalAudioCapture;
+        return cap != null && cap.isKaraokeActive();
+    }
+
+    public KaraokeMixer getKaraokeMixer() {
+        ExperimentalAudioCapture cap = this.experimentalAudioCapture;
+        return cap != null ? cap.karaoke() : null;
     }
 
     public static void mixPcm(byte[] buffer1, byte[] buffer2, byte[] outBuffer, int length) {

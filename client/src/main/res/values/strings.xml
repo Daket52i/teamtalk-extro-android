@@ -1352,6 +1352,17 @@ By: %3$s"</string>
     <!-- Voice Changer & Effects -->
     <string name="voice_changer_title">Voice Effects</string>
     <string name="voice_changer_active">Active voice effect: %s</string>
+    <string name="karaoke_title">Karaoke</string>
+    <string name="karaoke_choose_track">Pick a backing track</string>
+    <string name="karaoke_choose_other">Another track</string>
+    <string name="karaoke_playing">Backing track</string>
+    <string name="karaoke_volume">Backing track level: %1$d%%</string>
+    <string name="karaoke_monitor">Hear the backing track locally</string>
+    <string name="karaoke_stop">Stop</string>
+    <string name="karaoke_started">Karaoke on — your listeners hear the mix</string>
+    <string name="karaoke_stopped">Karaoke stopped</string>
+    <string name="karaoke_start_failed">Cannot start karaoke: join a channel and allow the mic first</string>
+    <string name="karaoke_no_picker">No file picker on this device</string>
     <string name="voice_effect_off">Normal</string>
     <string name="voice_effect_echo">Echo &amp; Reverb</string>
     <string name="voice_effect_deep">Deep Voice</string>
