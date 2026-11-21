@@ -91,32 +91,52 @@ public class AppUpdateManager {
                 long apkSize = 0;
 
                 JSONArray assets = json.optJSONArray("assets");
+                long selectedAssetId = 0;
                 if (assets != null && assets.length() > 0) {
-                    // Priority 1: Universal APK
+                    // Priority 1: Universal Release APK
                     for (int i = 0; i < assets.length(); i++) {
                         JSONObject asset = assets.getJSONObject(i);
                         String assetName = asset.optString("name", "");
-                        if (assetName.toLowerCase().endsWith(".apk") && assetName.toLowerCase().contains("universal")) {
+                        String lower = assetName.toLowerCase();
+                        if (lower.endsWith("-release.apk") && lower.contains("universal")) {
                             apkDownloadUrl = asset.optString("browser_download_url", null);
                             apkName = assetName;
                             apkSize = asset.optLong("size", 0);
+                            selectedAssetId = asset.optLong("id", 0);
                             break;
                         }
                     }
-                    // Priority 2: ARM64 APK
+                    // Priority 2: ARM64 Release APK
                     if (apkDownloadUrl == null) {
                         for (int i = 0; i < assets.length(); i++) {
                             JSONObject asset = assets.getJSONObject(i);
                             String assetName = asset.optString("name", "");
-                            if (assetName.toLowerCase().endsWith(".apk") && assetName.toLowerCase().contains("arm64")) {
+                            String lower = assetName.toLowerCase();
+                            if (lower.endsWith("-release.apk") && lower.contains("arm64")) {
                                 apkDownloadUrl = asset.optString("browser_download_url", null);
                                 apkName = assetName;
                                 apkSize = asset.optLong("size", 0);
+                                selectedAssetId = asset.optLong("id", 0);
                                 break;
                             }
                         }
                     }
-                    // Priority 3: Any APK
+                    // Priority 3: Any Release APK
+                    if (apkDownloadUrl == null) {
+                        for (int i = 0; i < assets.length(); i++) {
+                            JSONObject asset = assets.getJSONObject(i);
+                            String assetName = asset.optString("name", "");
+                            String lower = assetName.toLowerCase();
+                            if (lower.endsWith("-release.apk")) {
+                                apkDownloadUrl = asset.optString("browser_download_url", null);
+                                apkName = assetName;
+                                apkSize = asset.optLong("size", 0);
+                                selectedAssetId = asset.optLong("id", 0);
+                                break;
+                            }
+                        }
+                    }
+                    // Priority 4: Universal or any APK fallback
                     if (apkDownloadUrl == null) {
                         for (int i = 0; i < assets.length(); i++) {
                             JSONObject asset = assets.getJSONObject(i);
@@ -125,6 +145,7 @@ public class AppUpdateManager {
                                 apkDownloadUrl = asset.optString("browser_download_url", null);
                                 apkName = assetName;
                                 apkSize = asset.optLong("size", 0);
+                                selectedAssetId = asset.optLong("id", 0);
                                 break;
                             }
                         }
@@ -134,14 +155,26 @@ public class AppUpdateManager {
                 final String finalApkUrl = apkDownloadUrl;
                 final String finalApkName = !TextUtils.isEmpty(apkName) ? apkName : "TeamTalkExtro-" + tagName + ".apk";
                 final long finalApkSize = apkSize;
+                final long finalAssetId = selectedAssetId;
 
                 String currentVersion = BuildConfig.VERSION_NAME;
                 boolean isNewer = isVersionNewer(tagName, currentVersion);
 
+                // Also extract version from the APK filename (e.g. TeamTalkExtro-5.30.4-universal-release.apk)
+                // so that if a tag has an older or same-version APK attached, we never offer it as an update.
+                String apkFileVersion = extractVersionFromApkName(apkName);
+                if (!TextUtils.isEmpty(apkFileVersion) && !isVersionNewer(apkFileVersion, currentVersion)) {
+                    isNewer = false;
+                }
+
                 SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(activity.getApplicationContext());
                 String ignoredVersion = prefs.getString(Preferences.PREF_IGNORED_UPDATE_VERSION, "");
+                long lastInstalledAssetId = prefs.getLong("last_downloaded_update_asset_id", -1L);
+                if (finalAssetId > 0 && finalAssetId == lastInstalledAssetId && !isNewer) {
+                    isNewer = false;
+                }
 
-                if ((isNewer || (userInitiated && !normalizeVersion(tagName).equalsIgnoreCase(normalizeVersion(currentVersion)))) && !TextUtils.isEmpty(finalApkUrl)) {
+                if (isNewer && !TextUtils.isEmpty(finalApkUrl)) {
                     if (!userInitiated && tagName.equalsIgnoreCase(ignoredVersion)) {
                         Log.d(TAG, "Update " + tagName + " was ignored by user.");
                         return;
@@ -149,7 +182,7 @@ public class AppUpdateManager {
 
                     mainHandler.post(() -> {
                         if (!activity.isFinishing()) {
-                            showUpdateDialog(activity, tagName, releaseName, releaseNotes, finalApkUrl, finalApkName, finalApkSize);
+                            showUpdateDialog(activity, tagName, releaseName, releaseNotes, finalApkUrl, finalApkName, finalApkSize, finalAssetId);
                         }
                     });
                 } else {
@@ -178,6 +211,17 @@ public class AppUpdateManager {
     private static String normalizeVersion(String v) {
         if (v == null) return "";
         return v.replaceAll("^[vV]", "").trim();
+    }
+
+    private static String extractVersionFromApkName(String apkName) {
+        if (TextUtils.isEmpty(apkName)) {
+            return "";
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+\\.\\d+\\.\\d+)").matcher(apkName);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return "";
     }
 
     private static boolean isVersionNewer(String latestTag, String currentVersion) {
@@ -216,12 +260,12 @@ public class AppUpdateManager {
                 return false;
             }
         }
-        return parts1.length > parts2.length;
+        return false;
     }
 
     private static void showUpdateDialog(final Activity activity, final String tagName, final String releaseName,
                                          final String releaseNotes, final String downloadUrl, final String apkName,
-                                         final long apkSize) {
+                                         final long apkSize, final long assetId) {
         MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(activity);
         builder.setTitle(activity.getString(R.string.update_available_title, tagName));
 
@@ -240,6 +284,10 @@ public class AppUpdateManager {
         builder.setView(dialogView);
 
         builder.setPositiveButton(R.string.update_btn_now, (dialog, which) -> {
+            if (assetId > 0) {
+                SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(activity.getApplicationContext());
+                prefs.edit().putLong("last_downloaded_update_asset_id", assetId).apply();
+            }
             downloadAndInstall(activity, downloadUrl, apkName, apkSize);
         });
 
