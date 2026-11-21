@@ -1939,8 +1939,9 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     public void applyConfiguredInputDeviceSelection() {
         boolean tx = isVoiceTransmissionEnabled();
         boolean vox = isVoiceActivationEnabled();
+        boolean karaoke = isKaraokeActive();
         stopExperimentalVoiceTransmission(true);
-        if (tx) {
+        if (tx || karaoke) {
             startVoiceCapture(false);
         } else if (vox) {
             startVoiceCapture(true);
@@ -1948,12 +1949,8 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     }
 
     public void onVoiceChangerModeChanged() {
-        if (this.ttclient == null) {
-            return;
-        }
-        if (isVoiceTransmitting() || isVoiceTransmissionEnabled() || isVoiceActivationEnabled()) {
-            applyConfiguredInputDeviceSelection();
-        }
+        // VoiceChanger updates its mode atomically in-place without needing
+        // to stop and reopen AudioRecord (which would interrupt karaoke/tx).
     }
 
     private boolean karaokeAutoStartedCapture = false;
@@ -1985,6 +1982,10 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         if (channels <= 0) {
             channels = 1;
         }
+        SharedPreferences prefs = getSessionPreferences();
+        int savedGain = Math.max(0, Math.min(100, prefs.getInt("karaoke_gain", 75)));
+        cap.karaoke().setGain(savedGain / 100f);
+        cap.karaoke().setMonitorEnabled(prefs.getBoolean("karaoke_monitor", true));
         cap.karaoke().start(uri, rate, channels);
         return cap.karaoke().isRunning();
     }

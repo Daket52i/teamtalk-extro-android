@@ -1422,7 +1422,8 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         KaraokeMixer mixer = service.getKaraokeMixer();
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
         if (mixer != null) {
-            mixer.setGain(prefs.getInt(PREF_KARAOKE_GAIN, 100) / 100f);
+            int savedGain = Math.max(0, Math.min(100, prefs.getInt(PREF_KARAOKE_GAIN, 75)));
+            mixer.setGain(savedGain / 100f);
             mixer.setMonitorEnabled(prefs.getBoolean(PREF_KARAOKE_MONITOR, true));
         }
         Toast.makeText(this, R.string.karaoke_started, Toast.LENGTH_SHORT).show();
@@ -1451,8 +1452,8 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
 
         final TextView gainLabel = new TextView(this);
         final SeekBar gainBar = new SeekBar(this);
-        gainBar.setMax(200);
-        int gainValue = prefs.getInt(PREF_KARAOKE_GAIN, 100);
+        gainBar.setMax(100);
+        int gainValue = Math.max(0, Math.min(100, prefs.getInt(PREF_KARAOKE_GAIN, 75)));
         gainBar.setProgress(gainValue);
         gainLabel.setText(getString(R.string.karaoke_volume, gainValue));
         layout.addView(gainLabel);
@@ -1468,6 +1469,9 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 gainLabel.setText(getString(R.string.karaoke_volume, progress));
                 mixer.setGain(progress / 100f);
+                if (fromUser) {
+                    prefs.edit().putInt(PREF_KARAOKE_GAIN, progress).apply();
+                }
             }
 
             @Override

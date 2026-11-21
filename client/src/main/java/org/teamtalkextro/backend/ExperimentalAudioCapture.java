@@ -604,14 +604,10 @@ public final class ExperimentalAudioCapture {
             return;
         }
         mixer.read(karaokeBuf, 0, length);
-        // Leave headroom for the voice. A mastering-level minus summed with a
-        // sung note sits above the limiter knee the whole time, which is heard
-        // as constant overload on the listener side.
-        final float minusLevel = 0.75f;
         for (int i = 0; i + 1 < length; i += 2) {
             short mic = (short) ((micBuf[i] & 255) | ((micBuf[i + 1] & 255) << 8));
             short minus = (short) ((karaokeBuf[i] & 255) | ((karaokeBuf[i + 1] & 255) << 8));
-            short result = VoiceChanger.clampToShort(mic + minus * minusLevel);
+            short result = VoiceChanger.clampToShort((float) mic + (float) minus);
             micBuf[i] = (byte) (result & 255);
             micBuf[i + 1] = (byte) ((result >> 8) & 255);
         }
@@ -757,17 +753,15 @@ public final class ExperimentalAudioCapture {
                 ringWriteIdx = (ringWriteIdx + 1) % 2;
                 if (ringCount < 2) ringCount++;
             } else {
-                if (this.micEnhancementEnabled && screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY) {
-                    MicEnhancement.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
-                }
                 if (screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY) {
+                    if (this.micEnhancementEnabled) {
+                        MicEnhancement.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
+                    }
                     MicrophoneEqualizer.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
+                    VoiceChanger.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
+                    applyGain(micBuffer, session.gainMultiplier);
                 }
                 mixInternalAudio(session, micBuffer, internalBuffer, frameBytes, internalGain, screenMode);
-                if (screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY) {
-                    VoiceChanger.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
-                }
-                applyGain(micBuffer, session.gainMultiplier);
                 mixKaraoke(micBuffer, karaokeBuffer, frameBytes);
 
                 block.nStreamID = session.streamId;

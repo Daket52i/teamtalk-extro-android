@@ -47,7 +47,7 @@ public final class KaraokeMixer {
     private volatile boolean primed;
     private volatile int targetSampleRate = 48000;
     private volatile int targetChannels = 1;
-    private volatile float gain = 1.0f;
+    private volatile float gain = 0.75f;
     private volatile boolean monitorEnabled = true;
     private volatile String title = "";
 
@@ -85,6 +85,20 @@ public final class KaraokeMixer {
 
     public void setGain(float value) {
         this.gain = Math.max(0f, Math.min(1f, value));
+    }
+
+    public float getGain() {
+        return this.gain;
+    }
+
+    private float getEffectiveGain() {
+        float g = this.gain;
+        if (g <= 0.001f) {
+            return 0f;
+        }
+        // Perceptual volume curve with 0.75 headroom at 100% so a mastered
+        // backing track leaves room for the singer's voice without clipping.
+        return (float) (Math.pow(g, 1.5) * 0.75);
     }
 
     public void setMonitorEnabled(boolean enabled) {
@@ -186,9 +200,10 @@ public final class KaraokeMixer {
             if (readPos < 0) {
                 readPos += this.ring.length;
             }
+            float effectiveGain = getEffectiveGain();
             for (int i = 0; i < available; i++) {
                 short s = this.ring[readPos];
-                short out = VoiceChanger.clampToShort(s * this.gain);
+                short out = effectiveGain <= 0f ? 0 : VoiceChanger.clampToShort(s * effectiveGain);
                 dst[offset + i * 2] = (byte) (out & 255);
                 dst[offset + i * 2 + 1] = (byte) ((out >> 8) & 255);
                 readPos++;
@@ -411,9 +426,16 @@ public final class KaraokeMixer {
                             }
                             int framed = channelMixer.convert(converted, samples, channelBuf);
                             resampler.push(channelBuf, framed);
-                            int produced = resampler.pull(out, out.length / this.targetChannels);
-                            if (produced > 0) {
-                                writeToRing(out, produced * this.targetChannels);
+                            int produced;
+                            while (this.running && (produced = resampler.pull(out, out.length / this.targetChannels)) > 0) {
+                                int count = produced * this.targetChannels;
+                                while (this.running && !this.paused && ringSpace() < count) {
+                                    sleepQuiet(10L);
+                                }
+                                if (!this.running) {
+                                    break;
+                                }
+                                writeToRing(out, count);
                             }
                         }
                     }
@@ -428,7 +450,7 @@ public final class KaraokeMixer {
 
                 // Keep the ring close to full; when it is there is nothing to
                 // do but wait for the capture thread to drain it.
-                if (ringFull()) {
+                while (this.running && !this.paused && ringFull()) {
                     sleepQuiet(10L);
                 }
             }
@@ -456,6 +478,12 @@ public final class KaraokeMixer {
         }
     }
 
+    private int ringSpace() {
+        synchronized (this.ringLock) {
+            return this.ring.length - this.ringCount;
+        }
+    }
+
     private void writeToRing(float[] src, int count) {
         synchronized (this.ringLock) {
             int capacity = this.ring.length;
@@ -472,7 +500,8 @@ public final class KaraokeMixer {
             }
             int n = Math.min(count, space);
             for (int i = 0; i < n; i++) {
-                this.ring[this.ringWrite] = VoiceChanger.clampToShort(src[i] * 32767f);
+                // src[i] is already in 16-bit PCM range [-32768..32767] from ShortsBuffer.
+                this.ring[this.ringWrite] = VoiceChanger.clampToShort(src[i]);
                 this.ringWrite++;
                 if (this.ringWrite >= capacity) {
                     this.ringWrite = 0;
