@@ -59,6 +59,9 @@
                 android:id="@+id/action_soundboard"
                 android:title="@string/soundboard_title"/>
             <item
+                android:id="@+id/action_embedded_bot"
+                android:title="@string/action_embedded_bot"/>
+            <item
                 android:id="@+id/action_share_screen"
                 android:title="@string/text_screenshare_start"/>
             <item

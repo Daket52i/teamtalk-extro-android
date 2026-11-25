@@ -177,6 +177,12 @@ public final class SettingsBackupManager {
             root.add("android_preferences", androidPrefs);
             root.add("android_preference_types", androidPrefTypes);
 
+            // 4. Embedded TTMediaBot profiles
+            try {
+                root.add("bot_profiles", org.teamtalkextro.bot.BotConfig.toJsonArray(context));
+            } catch (Throwable ignored) {
+            }
+
             Gson gson = new GsonBuilder().setPrettyPrinting().create();
             String json = gson.toJson(root);
 
@@ -386,6 +392,15 @@ public final class SettingsBackupManager {
 
             editor.apply();
             VoiceChanger.loadFromPreferences(context);
+
+            // 4. Restore embedded TTMediaBot profiles (backwards-compatible)
+            if (root.has("bot_profiles") && root.get("bot_profiles").isJsonArray()) {
+                try {
+                    int botAdded = org.teamtalkextro.bot.BotConfig.importJsonArray(context, root.getAsJsonArray("bot_profiles"));
+                    prefsRestored += botAdded;
+                } catch (Throwable ignored) {
+                }
+            }
 
             return new ImportResult(true, platform, added, skipped, prefsRestored, null);
         } catch (Throwable t) {

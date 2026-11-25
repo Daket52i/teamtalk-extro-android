@@ -18,9 +18,14 @@
 - **Автостатус:** автоматическое отображение `🎤 <Название трека>` в статусе пользователя и возврат прежнего статуса при остановке.
 - **Встроенный саундпад (6 студийных SFX):** Аплодисменты, Барабанная дробь, Фанфары, Джингл / Эфир, Звонок / Дзинь, Сигнал / Баззер — доступны даже без запущенного караоке.
 
+### 🤖 Встроенный музыкальный бот с телефона (TTMediaBot Extro)
+- Автономный музыкальный и радиобот (на базе `Daket52i/TTMediaBot-by-dancho`), работающий прямо на Android через отдельный экземпляр `TeamTalk5` без помех вашему подключению и микрофону.
+- Поиск и воспроизведение из **Хитмо (`hitmo`)**, **Музфонда (`mf`)**, **Rutube (`rt`)**, **16 встроенных FM-радиостанций + Radio Browser (`radio`)**, прямых ссылок и локальных файлов с телефона.
+- Полный набор чат-команд (`p`, `sr`, `sl`, `sv`, `r`, `sp`, `s`, `n`, `b`, `q`, `c`, `v`, `sf`, `sb`, `now`, `j`, `st`, `h`), очередь, перемотка, ICY-названия эфира, автостатус `🎵`, автопереподключение и профили ботов с сохранением в JSON-бэкапе.
+
 ### 👀 Просмотр онлайна сервера без входа (Server Peek)
-- Узнайте, кто сейчас на сервере и в каких каналах, **не заходя в канал** и не прерывая текущее активное подключение.
-- Полная поддержка TalkBack и быстрые кнопки «Обновить» и «Подключиться».
+- Кнопка просмотра прямо на каждой карточке сервера в 1 касание — узнайте, кто сейчас на сервере и в каких каналах, **не заходя в канал** и не прерывая текущее активное подключение.
+- Мгновенный просмотр (0 мс) для текущего подключённого сервера, полная поддержка TLS, TalkBack и быстрые кнопки «Обновить» и «Подключиться».
 
 ### 💾 Единый кроссплатформенный бэкап (JSON)
 - Экспорт и импорт списка серверов, настроек Voice Changer / Auto-Tune / Караоке и всех параметров приложения в единый JSON-файл через Android Storage Access Framework (Android 5 – Android 16).
@@ -39,8 +44,9 @@
 ├── client/                         # Android-приложение (Java 17, Material 3)
 │   ├── src/main/java/org/teamtalkextro/
 │   │   ├── backend/                # TeamTalkService, VoiceChanger, KaraokeMixer, SoundboardEngine, ServerPeekHelper
+│   │   ├── bot/                    # EmbeddedMediaBot, BotAudioStreamer, BotMusicSearch, BotConfig
 │   │   ├── data/                   # Preferences, ServerEntry, SettingsBackupManager
-│   │   └── gui/                    # MainActivity, ServerListActivity, PreferencesActivity и др.
+│   │   └── gui/                    # MainActivity, ServerListActivity, BotManagerActivity, PreferencesActivity и др.
 │   └── libs/TeamTalk5.jar          # Java API TeamTalk 5 SDK
 ├── sdk/                            # Исходники TeamTalk 5 SDK
 ├── server/                         # Вспомогательные серверные сервисы
@@ -73,3 +79,4 @@ cd client
 ## 🙏 Благодарности (Credits)
 - Основано на **[BearWare/TeamTalk5](https://github.com/BearWare/TeamTalk5)** (TeamTalk 5 SDK и базовый клиент).
 - Основано на **[nekit-wq/Teamtalk-next](https://github.com/nekit-wq/Teamtalk-next)** (расширенный Android-клиент TeamTalk Next).
+- Встроенный музыкальный бот вдохновлён **[Daket52i/TTMediaBot-by-dancho](https://github.com/Daket52i/TTMediaBot-by-dancho)**.

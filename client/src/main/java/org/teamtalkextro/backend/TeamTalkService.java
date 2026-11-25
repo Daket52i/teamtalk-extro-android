@@ -157,6 +157,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     private int nextExperimentalVoiceStreamId = 0;
     private PowerManager.WakeLock mServiceWakeLock;
     private WifiManager.WifiLock mServiceWifiLock;
+    private org.teamtalkextro.bot.EmbeddedMediaBot embeddedBot;
     Channel mychannel;
     private NotificationManager notificationManager;
     OnVoiceTransmissionToggleListener onVoiceTransmissionToggleListener;
@@ -582,8 +583,12 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
             this.ttclient.disconnect();
         }
         this.ttserver = null;
-        displayNotification(false);
-        releaseServiceLocks();
+        if (isEmbeddedBotActive()) {
+            displayNotification(true);
+        } else {
+            displayNotification(false);
+            releaseServiceLocks();
+        }
         this.joinchannel = null;
         setMyChannel(null);
         this.activecmds.clear();
@@ -797,6 +802,12 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
             this.mFloatingWindowManager.hide();
             this.mFloatingWindowManager = null;
         }
+        if (this.embeddedBot != null) {
+            try {
+                this.embeddedBot.stop();
+            } catch (Throwable ignored) {}
+            this.embeddedBot = null;
+        }
         AudioEffectsManager.getInstance(this).release();
         if (this.ttclient != null) {
             this.ttclient.closeSoundInputDevice();
@@ -812,16 +823,58 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     private String getNotificationText() {
         Channel channel = this.mychannel;
         ServerEntry serverEntry = this.ttserver;
+        boolean botActive = isEmbeddedBotActive();
         if (serverEntry == null) {
+            if (botActive) {
+                return "TTMediaBot: " + this.embeddedBot.getNotificationSummary();
+            }
             return getString(R.string.app_name);
         }
-        return channel != null ? String.format("%s / %s", serverEntry.servername, this.mychannel.szName) : serverEntry.servername;
+        String mainText = channel != null ? String.format("%s / %s", serverEntry.servername, this.mychannel.szName) : serverEntry.servername;
+        if (botActive) {
+            return mainText + " • Bot";
+        }
+        return mainText;
+    }
+
+    public synchronized org.teamtalkextro.bot.EmbeddedMediaBot getEmbeddedBot() {
+        if (this.embeddedBot == null) {
+            this.embeddedBot = new org.teamtalkextro.bot.EmbeddedMediaBot(getApplicationContext());
+        }
+        return this.embeddedBot;
+    }
+
+    public boolean isEmbeddedBotActive() {
+        return this.embeddedBot != null && this.embeddedBot.isRunning();
+    }
+
+    public void startEmbeddedBot(org.teamtalkextro.bot.BotConfig config) {
+        org.teamtalkextro.bot.EmbeddedMediaBot bot = getEmbeddedBot();
+        acquireServiceLocks();
+        bot.start(config);
+        displayNotification(true);
+    }
+
+    public void stopEmbeddedBot() {
+        if (this.embeddedBot != null) {
+            this.embeddedBot.stop();
+        }
+        if (this.ttserver == null) {
+            displayNotification(false);
+            releaseServiceLocks();
+        } else {
+            displayNotification(true);
+        }
+    }
+
+    public Channel getMyChannel() {
+        return this.mychannel;
     }
 
     public void displayNotification(boolean enabled) {
         Notification notification = this.widget;
         if (enabled) {
-            if (this.ttserver == null) {
+            if (this.ttserver == null && !isEmbeddedBotActive()) {
                 return;
             }
             if (notification == null) {

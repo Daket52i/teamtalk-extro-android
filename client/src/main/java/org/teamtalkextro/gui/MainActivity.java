@@ -542,6 +542,11 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             soundboardItem.setEnabled(isLeaveable).setVisible(true);
         }
 
+        MenuItem botItem = menu.findItem(R.id.action_embedded_bot);
+        if (botItem != null) {
+            botItem.setEnabled(true).setVisible(true);
+        }
+
         MenuItem shareScreenItem = menu.findItem(R.id.action_share_screen);
         if (shareScreenItem != null) {
             boolean sharing = getService() != null && getService().isScreenSharingActive();
@@ -571,6 +576,9 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             return true;
         } else if (itemId == R.id.action_soundboard) {
             showSoundboardDialog();
+            return true;
+        } else if (itemId == R.id.action_embedded_bot) {
+            startActivity(new Intent(this, BotManagerActivity.class));
             return true;
         } else if (itemId == R.id.action_share_screen) {
             handleScreenShareAction();

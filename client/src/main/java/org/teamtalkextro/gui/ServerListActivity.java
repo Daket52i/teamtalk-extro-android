@@ -486,8 +486,9 @@ public class ServerListActivity extends AppCompatActivity
 
         if (isFinishing() && mConnection.isBound()) {
             boolean isConnected = getClient() != null && (getClient().getFlags() & 1) != 0;
-            if (!isConnected) {
-                // Unbind and stop service only if not connected to server
+            boolean botActive = getService() != null && getService().isEmbeddedBotActive();
+            if (!isConnected && !botActive) {
+                // Unbind and stop service only if not connected to server and embedded bot is stopped
                 getService().resetState();
                 onServiceDisconnected(getService());
                 stopService(new Intent(getApplicationContext(), TeamTalkService.class));
@@ -678,6 +679,9 @@ public class ServerListActivity extends AppCompatActivity
             launchBackupExport();
         } else if (itemId == R.id.action_backup_import) {
             launchBackupImport();
+        } else if (itemId == R.id.action_embedded_bot) {
+            Intent botIntent = new Intent(ServerListActivity.this, BotManagerActivity.class);
+            startActivity(botIntent);
         } else if (itemId == R.id.action_enter_joincode) {
             enterJoinCode();
         } else if (itemId == R.id.action_settings) {
@@ -804,7 +808,7 @@ public class ServerListActivity extends AppCompatActivity
         } catch (Exception ignored) {
         }
 
-        handleRef[0] = ServerPeekHelper.peekAsync(this, entry, result -> {
+        handleRef[0] = ServerPeekHelper.peekAsync(this, entry, getService(), result -> {
             if (isFinishing() || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed())) {
                 return;
             }
@@ -1145,6 +1149,7 @@ public class ServerListActivity extends AppCompatActivity
             private final TextView serverName;
             private final TextView serverSummary;
             private final TextView serverPing;
+            private final android.widget.ImageButton btnServerPeek;
 
             public ServerViewHolder(@NonNull View itemView) {
                 super(itemView);
@@ -1153,6 +1158,7 @@ public class ServerListActivity extends AppCompatActivity
                 serverName = itemView.findViewById(R.id.server_name);
                 serverSummary = itemView.findViewById(R.id.server_summary);
                 serverPing = itemView.findViewById(R.id.server_ping);
+                btnServerPeek = itemView.findViewById(R.id.btn_server_peek);
             }
 
             public void bind(ServerEntry entry, int position) {
@@ -1167,11 +1173,20 @@ public class ServerListActivity extends AppCompatActivity
                         serverCheckbox.setVisibility(View.VISIBLE);
                         serverCheckbox.setChecked(selectedPositions.contains(position));
                     }
+                    if (btnServerPeek != null) {
+                        btnServerPeek.setVisibility(View.GONE);
+                        btnServerPeek.setOnClickListener(null);
+                    }
                     itemView.setSelected(selectedPositions.contains(position));
                 } else {
                     if (serverCheckbox != null) {
                         serverCheckbox.setVisibility(View.GONE);
                         serverCheckbox.setChecked(false);
+                    }
+                    if (btnServerPeek != null) {
+                        btnServerPeek.setVisibility(View.VISIBLE);
+                        btnServerPeek.setContentDescription(getString(R.string.action_peek_server) + ": " + entry.servername);
+                        btnServerPeek.setOnClickListener(v -> showServerPeekDialog(entry));
                     }
                     itemView.setSelected(false);
                 }

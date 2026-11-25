@@ -34,6 +34,11 @@
         android:title="@string/action_export_serverlist">
     </item>
     <item
+        android:id="@+id/action_embedded_bot"
+        app:showAsAction="never"
+        android:orderInCategory="55"
+        android:title="@string/action_embedded_bot"/>
+    <item
         android:id="@+id/action_backup_export"
         app:showAsAction="never"
         android:orderInCategory="60"
