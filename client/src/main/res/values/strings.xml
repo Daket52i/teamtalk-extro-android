@@ -1445,6 +1445,8 @@ By: %3$s"</string>
 
     <!-- Embedded Android TTMediaBot -->
     <string name="action_embedded_bot">Music Bot (TTMediaBot)</string>
+    <string name="action_embedded_bot_running">Music Bot (Running)</string>
+    <string name="pref_summary_embedded_bot">Configure and launch built-in music bot right from your phone</string>
     <string name="title_activity_bot_manager">Music Bot (TTMediaBot)</string>
     <string name="bot_card_status">Bot Status</string>
     <string name="bot_state_stopped">Stopped</string>

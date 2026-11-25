@@ -389,6 +389,16 @@ public class PreferencesActivity extends PreferenceActivity implements TeamTalkC
                 });
             }
 
+            Preference embeddedBotPref = findPreference("embedded_bot_settings");
+            if (embeddedBotPref != null) {
+                embeddedBotPref.setOnPreferenceClickListener(pref -> {
+                    if (getActivity() != null) {
+                        startActivity(new Intent(getActivity(), BotManagerActivity.class));
+                    }
+                    return true;
+                });
+            }
+
             Preference backupExportPref = findPreference("backup_export");
             if (backupExportPref != null) {
                 backupExportPref.setOnPreferenceClickListener(pref -> {

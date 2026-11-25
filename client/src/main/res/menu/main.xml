@@ -28,6 +28,12 @@
         android:title="@string/action_who_is_talking"/>
 
     <item
+        android:id="@+id/action_embedded_bot_top"
+        android:orderInCategory="93"
+        app:showAsAction="never"
+        android:title="@string/action_embedded_bot"/>
+
+    <item
         android:id="@+id/action_select_users"
         android:orderInCategory="95"
         app:showAsAction="never"
@@ -71,11 +77,11 @@
                 android:id="@+id/action_karaoke"
                 android:title="@string/karaoke_title"/>
             <item
-                android:id="@+id/action_soundboard"
-                android:title="@string/soundboard_title"/>
-            <item
                 android:id="@+id/action_embedded_bot"
                 android:title="@string/action_embedded_bot"/>
+            <item
+                android:id="@+id/action_soundboard"
+                android:title="@string/soundboard_title"/>
             <item
                 android:id="@+id/action_share_screen"
                 android:title="@string/text_screenshare_start"/>

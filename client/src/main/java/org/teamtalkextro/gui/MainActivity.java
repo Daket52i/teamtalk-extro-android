@@ -544,9 +544,17 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             soundboardItem.setEnabled(isLeaveable).setVisible(true);
         }
 
+        boolean botRunning = getService() != null && getService().isEmbeddedBotActive();
+        int botTitleRes = botRunning ? R.string.action_embedded_bot_running : R.string.action_embedded_bot;
         MenuItem botItem = menu.findItem(R.id.action_embedded_bot);
         if (botItem != null) {
+            botItem.setTitle(botTitleRes);
             botItem.setEnabled(true).setVisible(true);
+        }
+        MenuItem botTopItem = menu.findItem(R.id.action_embedded_bot_top);
+        if (botTopItem != null) {
+            botTopItem.setTitle(botTitleRes);
+            botTopItem.setEnabled(true).setVisible(true);
         }
 
         MenuItem shareScreenItem = menu.findItem(R.id.action_share_screen);
@@ -634,7 +642,7 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         } else if (itemId == R.id.action_soundboard) {
             showSoundboardDialog();
             return true;
-        } else if (itemId == R.id.action_embedded_bot) {
+        } else if (itemId == R.id.action_embedded_bot || itemId == R.id.action_embedded_bot_top) {
             startActivity(new Intent(this, BotManagerActivity.class));
             return true;
         } else if (itemId == R.id.action_share_screen) {
@@ -1610,6 +1618,17 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         btnSoundboard.setLayoutParams(sbLp);
         btnSoundboard.setOnClickListener(v -> showSoundboardDialog());
         layout.addView(btnSoundboard);
+
+        // Embedded Music Bot shortcut button
+        final Button btnEmbeddedBot = new Button(this);
+        btnEmbeddedBot.setText(R.string.action_embedded_bot);
+        btnEmbeddedBot.setAllCaps(false);
+        LinearLayout.LayoutParams botLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        botLp.topMargin = gap;
+        btnEmbeddedBot.setLayoutParams(botLp);
+        btnEmbeddedBot.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, BotManagerActivity.class)));
+        layout.addView(btnEmbeddedBot);
 
         gainBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override

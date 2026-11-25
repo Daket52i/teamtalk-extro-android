@@ -1441,6 +1441,8 @@
 
     <!-- Embedded Android TTMediaBot -->
     <string name="action_embedded_bot">Музыкальный бот (TTMediaBot)</string>
+    <string name="action_embedded_bot_running">Музыкальный бот (в эфире)</string>
+    <string name="pref_summary_embedded_bot">Настроить и запустить встроенного музыкального бота с телефона</string>
     <string name="title_activity_bot_manager">Музыкальный бот (TTMediaBot)</string>
     <string name="bot_card_status">Статус бота</string>
     <string name="bot_state_stopped">Остановлен</string>
