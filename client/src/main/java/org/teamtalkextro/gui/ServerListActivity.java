@@ -601,52 +601,20 @@ public class ServerListActivity extends AppCompatActivity
                 break;
             case REQUEST_BACKUP_EXPORT:
                 if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-                    final Uri uri = data.getData();
-                    if (executorService != null) {
-                        executorService.execute(() -> {
-                            SettingsBackupManager.ExportResult res = SettingsBackupManager.exportToUri(ServerListActivity.this, uri);
-                            runOnUiThread(() -> {
-                                if (res.success) {
-                                    Toast.makeText(ServerListActivity.this,
-                                            getString(R.string.backup_export_success, res.serverCount, res.prefCount),
-                                            Toast.LENGTH_LONG).show();
-                                } else {
-                                    Toast.makeText(ServerListActivity.this,
-                                            getString(R.string.backup_export_failed, res.errorMessage),
-                                            Toast.LENGTH_LONG).show();
-                                }
-                            });
-                        });
-                    }
+                    BackupDialogHelper.promptExportPasswordAndRun(ServerListActivity.this, data.getData(), executorService);
                 }
                 break;
             case REQUEST_BACKUP_IMPORT:
                 if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-                    final Uri uri = data.getData();
-                    if (executorService != null) {
-                        executorService.execute(() -> {
-                            SettingsBackupManager.ImportResult res = SettingsBackupManager.importFromUri(ServerListActivity.this, uri);
-                            runOnUiThread(() -> {
-                                if (res.success) {
-                                    synchronized (servers) {
-                                        servers.clear();
-                                        loadLocalServers();
-                                    }
-                                    if (adapter != null) {
-                                        adapter.updateServers();
-                                    }
-                                    Toast.makeText(ServerListActivity.this,
-                                            getString(R.string.backup_import_success, res.sourcePlatform,
-                                                    res.serversAdded, res.serversSkipped, res.prefsRestored),
-                                            Toast.LENGTH_LONG).show();
-                                } else {
-                                    Toast.makeText(ServerListActivity.this,
-                                            getString(R.string.backup_import_failed, res.errorMessage),
-                                            Toast.LENGTH_LONG).show();
-                                }
-                            });
-                        });
-                    }
+                    BackupDialogHelper.inspectAndImport(ServerListActivity.this, data.getData(), executorService, res -> {
+                        synchronized (servers) {
+                            servers.clear();
+                            loadLocalServers();
+                        }
+                        if (adapter != null) {
+                            adapter.updateServers();
+                        }
+                    });
                 }
                 break;
         }

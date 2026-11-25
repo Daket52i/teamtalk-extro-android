@@ -1049,6 +1049,9 @@ public class Utils {
         if (TextUtils.isEmpty(user.szNickname)) {
             return (context != null ? context.getString(R.string.pref_default_nickname) : "User") + " - #" + user.nUserID;
         }
+        if (org.teamtalkextro.security.ExtroShield.isAntiFloodZalgoEnabled(context)) {
+            return org.teamtalkextro.security.ExtroShield.sanitizeUnicode(user.szNickname).text;
+        }
         return user.szNickname;
     }
 

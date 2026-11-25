@@ -1729,4 +1729,117 @@
     <string name="action_remove_account">Удалить</string>
     <string name="msg_confirm_remove_account">Удалить аккаунт «%1$s» с этого устройства?</string>
     <string name="connection_cancelled">Подключение отменено</string>
+
+    <!-- v5.33.0 Зашифрованный бэкап -->
+    <string name="backup_password_required">Эта копия зашифрована. Введите пароль.</string>
+    <string name="backup_wrong_password">Неверный пароль или повреждённый зашифрованный файл копии.</string>
+    <string name="backup_export_password_title">Шифрование копии (AES-256)</string>
+    <string name="backup_export_password_message">Оставить пустым для обычного JSON, или ввести пароль для шифрования AES-256:</string>
+    <string name="backup_password_hint">Пароль (необязательно)</string>
+    <string name="backup_export_confirm">Сохранить</string>
+    <string name="backup_export_encrypted_success">Зашифрованная копия сохранена (серверов: %1$d, настроек: %2$d)</string>
+    <string name="backup_import_password_title">Зашифрованная копия</string>
+    <string name="backup_import_password_message">Введите пароль для расшифровки резервной копии AES-256:</string>
+    <string name="backup_decrypt_and_import">Расшифровать и импортировать</string>
+
+    <!-- v5.33.0 Щит безопасности (Extro Shield) -->
+    <string name="action_extro_shield">🛡️ Щит безопасности (Extro Shield)</string>
+    <string name="action_panic_mute">🚨 Паника / Тишина</string>
+    <string name="shield_dialog_title">🛡️ Щит безопасности (Extro Shield)</string>
+    <string name="shield_tls_encrypted">🔒 Зашифровано (TLS) — %1$s</string>
+    <string name="shield_tls_unencrypted">⚠️ Без шифрования — %1$s</string>
+    <string name="shield_tls_disconnected">Нет активного подключения к серверу</string>
+    <string name="shield_unencrypted_warning">⚠️ Внимание: подключение без шифрования (TLS отключён)</string>
+    <string name="shield_switch_safe_links">Фильтр опасных ссылок (IP-логгеры, punycode, APK/EXE, сокращатели, голый IP)</string>
+    <string name="shield_switch_anti_flood_zalgo">Анти-флуд и защита от Zalgo / Unicode-спуфинга</string>
+    <string name="shield_btn_panic_mute">🚨 Паника / Мгновенная тишина</string>
+    <string name="shield_btn_user_notes">📝 Заметки о пользователях</string>
+    <string name="shield_audit_log_header">📜 Журнал безопасности (%1$d)</string>
+    <string name="shield_audit_log_empty">Событий безопасности пока нет.</string>
+    <string name="shield_btn_copy_log">Копировать</string>
+    <string name="shield_btn_clear_log">Очистить</string>
+    <string name="shield_log_copied">Журнал безопасности скопирован</string>
+    <string name="shield_log_cleared">Журнал безопасности очищен</string>
+    <string name="shield_panic_mute_done">Режим паники: микрофон, VOX, эффекты, караоке, саундпад, экран, камера и бот остановлены.</string>
+    <string name="shield_link_warning_prefix">[⚠️ Осторожно: %1$s]</string>
+    <string name="shield_link_confirm_title">⚠️ Подозрительная ссылка</string>
+    <string name="shield_link_confirm_message">Щит безопасности обнаружил риск (%1$s):\n\n%2$s\n\nВы уверены, что хотите открыть ссылку?</string>
+    <string name="shield_link_open_anyway">Открыть всё равно</string>
+    <string name="shield_threat_ip_logger">IP-логгер</string>
+    <string name="shield_threat_punycode">Punycode-спуфинг</string>
+    <string name="shield_threat_executable">исполняемый файл / APK</string>
+    <string name="shield_threat_shortener">сокращатель ссылок</string>
+    <string name="shield_threat_raw_ip">прямой IP по HTTP</string>
+    <string name="shield_flood_blocked_notice">🛡️ Анти-флуд: серия сообщений от %1$s скрыта локально.</string>
+    <string name="shield_log_tls_enabled">Защищённое TLS-соединение установлено: %1$s</string>
+    <string name="shield_log_tls_disabled">ВНИМАНИЕ: подключение без шифрования (TLS выкл.): %1$s</string>
+    <string name="shield_log_kicked_unknown">Вас кикнули из канала</string>
+    <string name="shield_log_kicked_by">Вас кикнул из канала: %1$s</string>
+    <string name="shield_log_kick_user">Кик пользователя: %1$s</string>
+    <string name="shield_log_ban_user">Бан пользователя: %1$s</string>
+    <string name="shield_log_unicode_nick">Обезврежен Zalgo/RLO-спуфинг в нике: %1$s (#%2$d)</string>
+    <string name="shield_log_unicode_msg">Обезврежен Zalgo/RLO-спуфинг в сообщении от %1$s</string>
+    <string name="shield_log_dangerous_link">Опасная ссылка от %1$s (%2$s): %3$s</string>
+    <string name="shield_log_link_click_warn">Показано предупреждение перед открытием ссылки (%1$s): %2$s</string>
+    <string name="shield_log_panic_mute">Активирована кнопка «Паника» — все потоки, эффекты и бот остановлены</string>
+
+    <!-- v5.33.0 Студийные сцены -->
+    <string name="action_studio_scenes">🎛️ Студийные сцены</string>
+    <string name="studio_scenes_title">🎛️ Студийные сцены в 1 клик</string>
+    <string name="studio_scene_normal">🎙️ Обычное общение (эффекты ВЫКЛ, автоприглушение ВЫКЛ)</string>
+    <string name="studio_scene_dj">📻 Радио-ведущий / Диджей (FM Эфир + автоприглушение)</string>
+    <string name="studio_scene_karaoke">🎤 Караоке-сцена (Концертный зал + приглушение + автостатус)</string>
+    <string name="studio_scene_autotune">✨ Поп-Автотюн (Auto-Tune + автоприглушение)</string>
+    <string name="studio_scene_prank">👻 Ночной пранк (Демон + приглушение ВЫКЛ)</string>
+    <string name="studio_scene_applied">Включена сцена: %1$s</string>
+
+    <!-- v5.33.0 Заметки о пользователях -->
+    <string name="action_user_notes">📝 Заметки о пользователях</string>
+    <string name="action_user_note">📝 Заметка о пользователе</string>
+    <string name="action_user_note_preview">📝 Заметка: %1$s</string>
+    <string name="user_notes_title">📝 Заметки о пользователях</string>
+    <string name="user_notes_empty">Заметок пока нет. Нажмите «Добавить» или зажмите любого участника в канале.</string>
+    <string name="user_notes_add">Добавить</string>
+    <string name="user_notes_add_title">Новая заметка о пользователе</string>
+    <string name="user_notes_user_hint">Логин или никнейм</string>
+    <string name="user_note_input_hint">Введите личную локальную заметку…</string>
+    <string name="user_note_edit_title">Заметка: %1$s</string>
+    <string name="user_note_save">Сохранить</string>
+    <string name="user_note_delete">Удалить</string>
+    <string name="user_note_saved">Заметка сохранена</string>
+    <string name="user_note_deleted">Заметка удалена</string>
+    <string name="user_note_prop_empty">📝 Заметка: (нет — нажмите, чтобы добавить)</string>
+    <string name="user_note_prop_value">📝 Заметка: %1$s</string>
+    <string name="user_note_tap_to_edit">Нажмите для редактирования</string>
+
+    <!-- v5.33.0 Таймер сна -->
+    <string name="action_sleep_timer">⏱️ Таймер сна</string>
+    <string name="action_sleep_timer_active">⏱️ Таймер сна (%1$s)</string>
+    <string name="sleep_timer_title">⏱️ Таймер сна</string>
+    <string name="sleep_timer_status_off">Таймер отключён</string>
+    <string name="sleep_timer_status_remaining">Осталось: %1$s</string>
+    <string name="sleep_timer_off">Отключить</string>
+    <string name="sleep_timer_minutes">%1$d минут</string>
+    <string name="sleep_timer_cancelled">Таймер сна отключён</string>
+    <string name="sleep_timer_armed_toast">Таймер сна установлен на %1$d мин</string>
+    <string name="sleep_timer_log_armed">Таймер сна запущен на %1$d мин</string>
+    <string name="sleep_timer_expired_log">Таймер сна сработал: медиа и бот остановлены, выполнено отключение</string>
+    <string name="sleep_timer_expired_toast">⏱️ Таймер сна завершён — соединение закрыто.</string>
+
+    <!-- v5.33.0 Кто сейчас говорит? -->
+    <string name="action_who_is_talking">🗣️ Кто сейчас говорит?</string>
+    <string name="who_is_talking_none">В канале сейчас никто не говорит.</string>
+    <string name="who_is_talking_list">Сейчас говорят: %1$s</string>
+    <string name="who_is_talking_role_voice">голос</string>
+    <string name="who_is_talking_role_media">медиа</string>
+    <string name="who_is_talking_role_both">голос + медиа</string>
+    <string name="who_is_talking_need_channel">Сначала войдите в канал, чтобы узнать, кто говорит.</string>
+
+    <!-- YouTube yt-dlp resolver (parity) -->
+    <string name="err_stream_resolver_not_configured">Сначала укажите адрес сервера yt-dlp API</string>
+    <string name="stream_resolver_url_hint">Адрес yt-dlp API (по умолчанию: http://2.26.96.45:8080/resolve)</string>
+    <string name="pref_title_stream_resolver">YouTube yt-dlp API</string>
+    <string name="pref_summary_stream_resolver">Адрес сервера для извлечения потоков YouTube</string>
+    <string name="err_stream_resolve_failed">Не удалось извлечь поток YouTube</string>
+    <string name="msg_stream_resolved">Поток YouTube получен</string>
 </resources>

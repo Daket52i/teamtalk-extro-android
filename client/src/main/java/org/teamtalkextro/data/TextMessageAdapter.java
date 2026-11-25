@@ -444,7 +444,37 @@ public class TextMessageAdapter extends BaseAdapter {
         dialog.show();
     }
 
-    public void openUrl(Context context, String url) {
+    public void openUrl(final Context context, final String url) {
+        if (context == null || url == null) return;
+        if (org.teamtalkextro.security.ExtroShield.isSafeLinkGuardEnabled(context)) {
+            java.util.Set<org.teamtalkextro.security.ExtroShield.ThreatType> threats =
+                    org.teamtalkextro.security.ExtroShield.inspectSingleUrl(url);
+            if (!threats.isEmpty()) {
+                String reasons = org.teamtalkextro.security.ExtroShield.describeThreats(context, threats);
+                org.teamtalkextro.security.ExtroShield.logEvent(
+                        org.teamtalkextro.security.ExtroShield.CAT_LINK,
+                        context.getString(R.string.shield_log_link_click_warn, reasons, url));
+                AlertDialog dialog = new MaterialAlertDialogBuilder(context)
+                        .setTitle(R.string.shield_link_confirm_title)
+                        .setMessage(context.getString(R.string.shield_link_confirm_message, reasons, url))
+                        .setPositiveButton(R.string.shield_link_open_anyway, (d, w) -> launchUrlDirect(context, url))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .create();
+                if (!(context instanceof Activity) && dialog.getWindow() != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+                    } else {
+                        dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_PHONE);
+                    }
+                }
+                dialog.show();
+                return;
+            }
+        }
+        launchUrlDirect(context, url);
+    }
+
+    private void launchUrlDirect(Context context, String url) {
         try {
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

@@ -75,6 +75,7 @@ public class UserPropActivity extends AppCompatActivity implements TeamTalkConne
     private TextView tvIpaddress;
     private TextView tvLocation;
     private TextView tvChannel;
+    private TextView tvUserNote;
     private String currentClientNameDisplay = "";
     private String currentLocationDisplay = "";
     private String currentChannelDisplay = "";
@@ -156,6 +157,10 @@ public class UserPropActivity extends AppCompatActivity implements TeamTalkConne
         this.tvIpaddress = findViewById(R.id.user_ipaddress);
         this.tvLocation = findViewById(R.id.user_location);
         this.tvChannel = findViewById(R.id.user_channel);
+        this.tvUserNote = findViewById(R.id.user_local_note);
+        if (this.tvUserNote != null) {
+            this.tvUserNote.setOnClickListener(v -> showEditUserNoteDialog());
+        }
         this.voiceVol = findViewById(R.id.user_vol_voiceSeekBar);
         this.defVoiceBtn = findViewById(R.id.defVoiceVolBtn);
         this.voiceMute = findViewById(R.id.user_mutevoiceSwitch);
@@ -639,6 +644,8 @@ public class UserPropActivity extends AppCompatActivity implements TeamTalkConne
                 }
             }
 
+            refreshUserNoteView();
+
             this.voiceVol.setProgress(Utils.refVolumeToPercent(user.nVolumeVoice));
             this.mediaVol.setProgress(Utils.refVolumeToPercent(user.nVolumeMediaFile));
             this.voiceMute.setChecked((user.uUserState & UserState.USERSTATE_MUTE_VOICE) != 0);
@@ -678,6 +685,48 @@ public class UserPropActivity extends AppCompatActivity implements TeamTalkConne
         } finally {
             this.isUpdatingUi = false;
         }
+    }
+
+    private void refreshUserNoteView() {
+        if (this.tvUserNote == null) return;
+        String note = org.teamtalkextro.data.UserNotesStore.getNoteForUser(this, this.user);
+        if (note.isEmpty()) {
+            this.tvUserNote.setText(getString(R.string.user_note_prop_empty));
+            this.tvUserNote.setContentDescription(getString(R.string.user_note_prop_empty));
+        } else {
+            String display = getString(R.string.user_note_prop_value, note);
+            this.tvUserNote.setText(display);
+            this.tvUserNote.setContentDescription(display + ". " + getString(R.string.user_note_tap_to_edit));
+        }
+    }
+
+    private void showEditUserNoteDialog() {
+        String key = org.teamtalkextro.data.UserNotesStore.keyForUser(this.user);
+        if (key.isEmpty()) return;
+        String existing = org.teamtalkextro.data.UserNotesStore.getNoteForUser(this, this.user);
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint(R.string.user_note_input_hint);
+        input.setText(existing);
+        input.setSelection(existing.length());
+        String displayName = Utils.getDisplayName(this, this.user);
+        new com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+                .setTitle(getString(R.string.user_note_edit_title, displayName))
+                .setView(ThemeHelper.wrapForDialog(input, this))
+                .setPositiveButton(R.string.user_note_save, (d, w) -> {
+                    String txt = input.getText() != null ? input.getText().toString().trim() : "";
+                    org.teamtalkextro.data.UserNotesStore.setNote(UserPropActivity.this, key, txt);
+                    refreshUserNoteView();
+                    Toast.makeText(UserPropActivity.this,
+                            txt.isEmpty() ? R.string.user_note_deleted : R.string.user_note_saved,
+                            Toast.LENGTH_SHORT).show();
+                })
+                .setNeutralButton(R.string.user_note_delete, (d, w) -> {
+                    org.teamtalkextro.data.UserNotesStore.removeNote(UserPropActivity.this, key);
+                    refreshUserNoteView();
+                    Toast.makeText(UserPropActivity.this, R.string.user_note_deleted, Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     @Override

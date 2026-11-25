@@ -118,6 +118,17 @@
             android:clickable="true"
             android:focusable="true"
             android:background="?attr/selectableItemBackground" />
+        <TextView
+            android:id="@+id/user_local_note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="44dp"
+            android:gravity="center_vertical"
+            android:textSize="14sp"
+            android:padding="8dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackground" />
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_copy_all_user_data"
             style="@style/Widget.Material3.Button.TonalButton"

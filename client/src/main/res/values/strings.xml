@@ -1733,4 +1733,109 @@ By: %3$s"</string>
     <string name="action_remove_account">Remove</string>
     <string name="msg_confirm_remove_account">Remove account \"%1$s\" from this device?</string>
     <string name="connection_cancelled">Connection cancelled</string>
+
+    <!-- v5.33.0 Encrypted Backup -->
+    <string name="backup_password_required">This backup is encrypted. Please enter the password.</string>
+    <string name="backup_wrong_password">Wrong password or corrupted encrypted backup.</string>
+    <string name="backup_export_password_title">Backup Encryption (AES-256)</string>
+    <string name="backup_export_password_message">Leave empty for plain JSON, or enter a password for cross-platform AES-256-GCM encryption:</string>
+    <string name="backup_password_hint">Password (optional)</string>
+    <string name="backup_export_confirm">Export</string>
+    <string name="backup_export_encrypted_success">Encrypted backup saved (%1$d servers, %2$d settings)</string>
+    <string name="backup_import_password_title">Encrypted Backup</string>
+    <string name="backup_import_password_message">Enter the password to decrypt this AES-256 backup:</string>
+    <string name="backup_decrypt_and_import">Decrypt &amp; Import</string>
+
+    <!-- v5.33.0 Extro Shield -->
+    <string name="action_extro_shield">🛡️ Extro Shield</string>
+    <string name="action_panic_mute">🚨 Panic Mute</string>
+    <string name="shield_dialog_title">🛡️ Extro Shield</string>
+    <string name="shield_tls_encrypted">🔒 Encrypted (TLS) — %1$s</string>
+    <string name="shield_tls_unencrypted">⚠️ Unencrypted connection — %1$s</string>
+    <string name="shield_tls_disconnected">Not connected to a server</string>
+    <string name="shield_unencrypted_warning">⚠️ Warning: Connected without TLS encryption</string>
+    <string name="shield_switch_safe_links">Safe Link Guard (IP-loggers, punycode, APK/EXE, shorteners, raw IP)</string>
+    <string name="shield_switch_anti_flood_zalgo">Anti-Flood &amp; Anti-Zalgo / Unicode Spoof Guard</string>
+    <string name="shield_btn_panic_mute">🚨 Emergency Panic Mute</string>
+    <string name="shield_btn_user_notes">📝 Local User Notes</string>
+    <string name="shield_audit_log_header">📜 Security Audit Log (%1$d)</string>
+    <string name="shield_audit_log_empty">No security events recorded yet.</string>
+    <string name="shield_btn_copy_log">Copy Log</string>
+    <string name="shield_btn_clear_log">Clear</string>
+    <string name="shield_log_copied">Security log copied to clipboard</string>
+    <string name="shield_log_cleared">Security log cleared</string>
+    <string name="shield_panic_mute_done">Panic Mute activated: mic, VOX, effects, karaoke, soundboard, screen share, webcam and bot stopped.</string>
+    <string name="shield_link_warning_prefix">[⚠️ Warning: %1$s]</string>
+    <string name="shield_link_confirm_title">⚠️ Suspicious Link Detected</string>
+    <string name="shield_link_confirm_message">Extro Shield flagged this link (%1$s):\n\n%2$s\n\nAre you sure you want to open it?</string>
+    <string name="shield_link_open_anyway">Open anyway</string>
+    <string name="shield_threat_ip_logger">IP-logger</string>
+    <string name="shield_threat_punycode">Punycode homograph</string>
+    <string name="shield_threat_executable">direct executable/APK</string>
+    <string name="shield_threat_shortener">URL shortener</string>
+    <string name="shield_threat_raw_ip">raw IP HTTP link</string>
+    <string name="shield_flood_blocked_notice">🛡️ Anti-Flood: burst messages from %1$s blocked locally.</string>
+    <string name="shield_log_tls_enabled">Encrypted TLS connection established: %1$s</string>
+    <string name="shield_log_tls_disabled">WARNING: Unencrypted connection (no TLS): %1$s</string>
+    <string name="shield_log_kicked_unknown">Kicked from channel</string>
+    <string name="shield_log_kicked_by">Kicked from channel by %1$s</string>
+    <string name="shield_log_kick_user">Kicked user: %1$s</string>
+    <string name="shield_log_ban_user">Banned user: %1$s</string>
+    <string name="shield_log_unicode_nick">Zalgo/RLO spoof neutralized in nickname: %1$s (#%2$d)</string>
+    <string name="shield_log_unicode_msg">Zalgo/RLO spoof neutralized in message from %1$s</string>
+    <string name="shield_log_dangerous_link">Suspicious link from %1$s (%2$s): %3$s</string>
+    <string name="shield_log_link_click_warn">Warning shown before opening suspicious link (%1$s): %2$s</string>
+    <string name="shield_log_panic_mute">Panic Mute activated — all TX/media/bot streams stopped</string>
+
+    <!-- v5.33.0 Studio Scenes -->
+    <string name="action_studio_scenes">🎛️ Studio Scenes</string>
+    <string name="studio_scenes_title">🎛️ One-Tap Studio Scenes</string>
+    <string name="studio_scene_normal">🎙️ Normal Voice (Effects OFF, Ducking OFF)</string>
+    <string name="studio_scene_dj">📻 Radio DJ (Broadcast DJ + Auto-Ducking)</string>
+    <string name="studio_scene_karaoke">🎤 Karaoke Stage (Concert Hall + Ducking + Auto-Status)</string>
+    <string name="studio_scene_autotune">✨ Pop Auto-Tune (Auto-Tune + Auto-Ducking)</string>
+    <string name="studio_scene_prank">👻 Night Prank (Demon + Ducking OFF)</string>
+    <string name="studio_scene_applied">Studio scene activated: %1$s</string>
+
+    <!-- v5.33.0 User Notes -->
+    <string name="action_user_notes">📝 User Notes</string>
+    <string name="action_user_note">📝 User Note</string>
+    <string name="action_user_note_preview">📝 Note: %1$s</string>
+    <string name="user_notes_title">📝 Local User Notes</string>
+    <string name="user_notes_empty">No user notes saved yet. Tap \"Add\" or long-press any user in a channel.</string>
+    <string name="user_notes_add">Add</string>
+    <string name="user_notes_add_title">New User Note</string>
+    <string name="user_notes_user_hint">Username or nickname</string>
+    <string name="user_note_input_hint">Enter your private local note…</string>
+    <string name="user_note_edit_title">Note: %1$s</string>
+    <string name="user_note_save">Save</string>
+    <string name="user_note_delete">Delete</string>
+    <string name="user_note_saved">Note saved</string>
+    <string name="user_note_deleted">Note removed</string>
+    <string name="user_note_prop_empty">📝 Local note: (none — tap to add)</string>
+    <string name="user_note_prop_value">📝 Local note: %1$s</string>
+    <string name="user_note_tap_to_edit">Tap to edit</string>
+
+    <!-- v5.33.0 Sleep Timer -->
+    <string name="action_sleep_timer">⏱️ Sleep Timer</string>
+    <string name="action_sleep_timer_active">⏱️ Sleep Timer (%1$s)</string>
+    <string name="sleep_timer_title">⏱️ Sleep Timer</string>
+    <string name="sleep_timer_status_off">Timer is off</string>
+    <string name="sleep_timer_status_remaining">Remaining: %1$s</string>
+    <string name="sleep_timer_off">Disable timer</string>
+    <string name="sleep_timer_minutes">%1$d minutes</string>
+    <string name="sleep_timer_cancelled">Sleep timer disabled</string>
+    <string name="sleep_timer_armed_toast">Sleep timer set for %1$d min</string>
+    <string name="sleep_timer_log_armed">Sleep timer armed for %1$d min</string>
+    <string name="sleep_timer_expired_log">Sleep timer expired: stopped media/bot and disconnected</string>
+    <string name="sleep_timer_expired_toast">⏱️ Sleep timer expired — disconnected from server.</string>
+
+    <!-- v5.33.0 Active Speakers -->
+    <string name="action_who_is_talking">🗣️ Who is talking?</string>
+    <string name="who_is_talking_none">Nobody is transmitting in this channel right now.</string>
+    <string name="who_is_talking_list">Currently talking: %1$s</string>
+    <string name="who_is_talking_role_voice">voice</string>
+    <string name="who_is_talking_role_media">media</string>
+    <string name="who_is_talking_role_both">voice + media</string>
+    <string name="who_is_talking_need_channel">Join a channel first to see active speakers.</string>
 </resources>

@@ -1,6 +1,7 @@
 package org.teamtalkextro.backend;
 
 import org.teamtalkextro.data.AntiSpamStore;
+import org.teamtalkextro.security.ExtroShield;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -258,6 +259,11 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     private final HashMap<Integer, Integer> antispam_dup_counts = new HashMap<>();
     private final HashSet<Integer> antispam_filter_logged = new HashSet<>();
     private boolean antispam_lists_loaded = false;
+    private volatile TextMessage lastShieldDroppedMsg = null;
+
+    public boolean wasTextMessageDroppedByShield(TextMessage msg) {
+        return msg != null && msg == this.lastShieldDroppedMsg;
+    }
     private static final int MESSAGE_SUBSCRIPTIONS = Subscription.SUBSCRIBE_USER_MSG | Subscription.SUBSCRIBE_CHANNEL_MSG | Subscription.SUBSCRIBE_BROADCAST_MSG;
     private static final int ALL_SUBSCRIPTIONS = MESSAGE_SUBSCRIPTIONS | Subscription.SUBSCRIBE_VOICE | Subscription.SUBSCRIBE_VIDEOCAPTURE | Subscription.SUBSCRIBE_DESKTOP | Subscription.SUBSCRIBE_MEDIAFILE;
     private final MediaSessionCompat.Callback mMediaSessionCallback = new MediaSessionCompat.Callback() { 
@@ -563,6 +569,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         this.antispam_dup_counts.clear();
         this.antispam_filter_logged.clear();
         this.antispam_lists_loaded = false;
+        ExtroShield.resetFloodState();
         this.talkingPeerUserIds.clear();
         this.isMyselfTalking = false;
         this.duckingHandler.removeCallbacks(this.unduckRunnable);
@@ -776,6 +783,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         if (this.recordingSilenceHandler != null) {
             this.recordingSilenceHandler.removeCallbacksAndMessages(null);
         }
+        cancelSleepTimer();
         stopScreenShare();
         if (this.screenShareManager != null) {
             this.screenShareManager.stopShare();
@@ -2201,6 +2209,187 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         return cap != null ? cap.karaoke() : null;
     }
 
+    public synchronized void stopSoundboard() {
+        if (this.soundboardCleanupRunnable != null) {
+            this.soundboardHandler.removeCallbacks(this.soundboardCleanupRunnable);
+            this.soundboardCleanupRunnable = null;
+        }
+        ExperimentalAudioCapture cap = this.experimentalAudioCapture;
+        if (cap != null) {
+            cap.stopSoundboard();
+        }
+        if (this.soundboardAutoStartedCapture) {
+            this.soundboardAutoStartedCapture = false;
+            if (!this.experimentalVoiceTransmissionRequested && !this.voiceActivationRequested && !isKaraokeActive()) {
+                stopExperimentalVoiceTransmission(true);
+                clearExperimentalAudioSessionModeIfIdle();
+            }
+        }
+    }
+
+    public boolean isConnectionEncrypted() {
+        return this.ttserver != null && this.ttserver.encrypted;
+    }
+
+    /**
+     * Emergency Privacy / Panic Mute: immediately stops microphone TX, VOX,
+     * Voice Changer, Karaoke, Soundboard, Screen Share, Webcam, and Embedded Bot.
+     */
+    public synchronized void triggerPanicMute() {
+        try {
+            enableVoiceTransmission(false);
+        } catch (Throwable ignored) {}
+        try {
+            enableVoiceActivation(false);
+        } catch (Throwable ignored) {}
+        try {
+            VoiceChanger.setMode(VoiceChanger.Mode.OFF);
+            PreferenceManager.getDefaultSharedPreferences(getApplicationContext())
+                    .edit()
+                    .putInt(Preferences.PREF_VOICE_CHANGER_MODE, VoiceChanger.Mode.OFF.getId())
+                    .apply();
+            onVoiceChangerModeChanged();
+        } catch (Throwable ignored) {}
+        try {
+            stopKaraoke();
+        } catch (Throwable ignored) {}
+        try {
+            stopSoundboard();
+        } catch (Throwable ignored) {}
+        try {
+            if (isScreenSharingActive()) {
+                stopScreenShare();
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (this.ttclient != null) {
+                this.ttclient.stopVideoCaptureTransmission();
+                this.ttclient.closeVideoCaptureDevice();
+                this.ttclient.enableVoiceTransmission(false);
+                this.ttclient.enableVoiceActivation(false);
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (isEmbeddedBotActive()) {
+                stopEmbeddedBot();
+            }
+        } catch (Throwable ignored) {}
+        // Guarantee TX/VOX remain completely off after stopping screen share / capture
+        try {
+            enableVoiceTransmission(false);
+            enableVoiceActivation(false);
+        } catch (Throwable ignored) {}
+        ExtroShield.logEvent(ExtroShield.CAT_PANIC, getString(R.string.shield_log_panic_mute));
+        updateFloatingWindow();
+    }
+
+    // --- Sleep Timer (runs inside TeamTalkService so it fires even with screen off) ---
+
+    public interface SleepTimerExpiredListener {
+        void onSleepTimerExpired();
+    }
+
+    private final Handler sleepTimerHandler = new Handler(Looper.getMainLooper());
+    private long sleepTimerEndElapsedMs = 0L;
+    private SleepTimerExpiredListener sleepTimerExpiredListener;
+    private final Runnable sleepTimerRunnable = this::executeSleepTimerExpiry;
+
+    public void setSleepTimerExpiredListener(SleepTimerExpiredListener listener) {
+        this.sleepTimerExpiredListener = listener;
+    }
+
+    public synchronized void setSleepTimerMinutes(int minutes) {
+        this.sleepTimerHandler.removeCallbacks(this.sleepTimerRunnable);
+        if (minutes <= 0) {
+            this.sleepTimerEndElapsedMs = 0L;
+            return;
+        }
+        long delayMs = minutes * 60_000L;
+        this.sleepTimerEndElapsedMs = SystemClock.elapsedRealtime() + delayMs;
+        acquireServiceLocks();
+        this.sleepTimerHandler.postDelayed(this.sleepTimerRunnable, delayMs);
+        ExtroShield.logEvent(ExtroShield.CAT_TIMER, getString(R.string.sleep_timer_log_armed, minutes));
+    }
+
+    public synchronized void cancelSleepTimer() {
+        this.sleepTimerHandler.removeCallbacks(this.sleepTimerRunnable);
+        this.sleepTimerEndElapsedMs = 0L;
+    }
+
+    public synchronized boolean isSleepTimerActive() {
+        return this.sleepTimerEndElapsedMs > 0L && getSleepTimerRemainingMs() > 0L;
+    }
+
+    public synchronized long getSleepTimerRemainingMs() {
+        if (this.sleepTimerEndElapsedMs <= 0L) return 0L;
+        long rem = this.sleepTimerEndElapsedMs - SystemClock.elapsedRealtime();
+        return Math.max(0L, rem);
+    }
+
+    public String formatSleepTimerRemaining() {
+        long remMs = getSleepTimerRemainingMs();
+        if (remMs <= 0L) return "";
+        long totalSec = (remMs + 999L) / 1000L;
+        long mins = totalSec / 60L;
+        long secs = totalSec % 60L;
+        return String.format(Locale.US, "%02d:%02d", mins, secs);
+    }
+
+    private void executeSleepTimerExpiry() {
+        synchronized (this) {
+            this.sleepTimerEndElapsedMs = 0L;
+        }
+        try {
+            stopKaraoke();
+        } catch (Throwable ignored) {}
+        try {
+            stopSoundboard();
+        } catch (Throwable ignored) {}
+        try {
+            if (isEmbeddedBotActive()) {
+                stopEmbeddedBot();
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (isScreenSharingActive()) {
+                stopScreenShare();
+            }
+        } catch (Throwable ignored) {}
+        try {
+            enableVoiceTransmission(false);
+            enableVoiceActivation(false);
+        } catch (Throwable ignored) {}
+
+        ExtroShield.logEvent(ExtroShield.CAT_TIMER, getString(R.string.sleep_timer_expired_log));
+
+        try {
+            resetState();
+        } catch (Throwable ignored) {}
+
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                if (Build.VERSION.SDK_INT >= 26) {
+                    NotificationChannel ch = new NotificationChannel(UI_CHANNEL_ID, getString(R.string.app_name), NotificationManager.IMPORTANCE_DEFAULT);
+                    nm.createNotificationChannel(ch);
+                }
+                Notification n = new NotificationCompat.Builder(this, UI_CHANNEL_ID)
+                        .setSmallIcon(R.drawable.teamtalk_green)
+                        .setContentTitle(getString(R.string.sleep_timer_title))
+                        .setContentText(getString(R.string.sleep_timer_expired_toast))
+                        .setAutoCancel(true)
+                        .build();
+                nm.notify(9330, n);
+            }
+        } catch (Throwable ignored) {}
+
+        Toast.makeText(this, R.string.sleep_timer_expired_toast, Toast.LENGTH_LONG).show();
+        SleepTimerExpiredListener listener = this.sleepTimerExpiredListener;
+        if (listener != null) {
+            listener.onSleepTimerExpired();
+        }
+    }
+
     public static void mixPcm(byte[] buffer1, byte[] buffer2, byte[] outBuffer, int length) {
         for (int i = 0; i < length; i += 2) {
             short s1 = (short) ((buffer1[i] & 0xFF) | (buffer1[i + 1] << 8));
@@ -2945,6 +3134,15 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         if (this.ttserver == null) {
             throw new AssertionError();
         }
+        String endpoint = (this.ttserver.ipaddr != null ? this.ttserver.ipaddr : "") + ":" + this.ttserver.tcpport;
+        if (this.ttserver.encrypted) {
+            ExtroShield.logEvent(ExtroShield.CAT_TLS, getString(R.string.shield_log_tls_enabled, endpoint));
+        } else {
+            String warn = getString(R.string.shield_log_tls_disabled, endpoint);
+            ExtroShield.logEvent(ExtroShield.CAT_TLS, warn);
+            getChatLogTextMsgs().add(MyTextMessage.createLogMsg(MyTextMessage.MSGTYPE_LOG_INFO, getString(R.string.shield_unencrypted_warning)));
+            Toast.makeText(this, R.string.shield_unencrypted_warning, Toast.LENGTH_LONG).show();
+        }
         if (Utils.isWebLogin(this.ttserver.username)) {
             requestWebLoginAccessToken();
         } else {
@@ -3055,16 +3253,31 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
 
     @Override
     public void onCmdMyselfKickedFromChannel() {
+        ExtroShield.logEvent(ExtroShield.CAT_MODERATION, getString(R.string.shield_log_kicked_unknown));
     }
 
     @Override
     public void onCmdMyselfKickedFromChannel(User kicker) {
         this.users.put(Integer.valueOf(kicker.nUserID), kicker);
+        String kickerName = Utils.getDisplayName(getBaseContext(), kicker);
+        ExtroShield.logEvent(ExtroShield.CAT_MODERATION, getString(R.string.shield_log_kicked_by, kickerName));
+    }
+
+    private void sanitizeUserNicknameIfNeeded(User user) {
+        if (user == null || TextUtils.isEmpty(user.szNickname)) return;
+        if (!ExtroShield.isAntiFloodZalgoEnabled(getApplicationContext())) return;
+        ExtroShield.SanitizeResult res = ExtroShield.sanitizeUnicode(user.szNickname);
+        if (res.modified) {
+            user.szNickname = res.text;
+            ExtroShield.logEvent(ExtroShield.CAT_UNICODE,
+                    getString(R.string.shield_log_unicode_nick, user.szNickname, user.nUserID));
+        }
     }
 
     @Override
     public void onCmdUserLoggedIn(User user) {
         int cmdid;
+        sanitizeUserNicknameIfNeeded(user);
         this.users.put(Integer.valueOf(user.nUserID), user);
         SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
         int def_unsub = 0;
@@ -3113,6 +3326,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
 
     @Override
     public void onCmdUserUpdate(User user) {
+        sanitizeUserNicknameIfNeeded(user);
         User olduser = this.users.get(Integer.valueOf(user.nUserID));
         if (olduser != null) {
             Utils.subscriptionLogChanged(getBaseContext(), olduser, user)
@@ -3141,6 +3355,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     @Override
     public void onCmdUserJoinedChannel(User user) {
         MyTextMessage msg;
+        sanitizeUserNicknameIfNeeded(user);
         this.users.put(Integer.valueOf(user.nUserID), user);
         applyIgnoreRulesToUser(user);
         if (this.ttserver.rememberLastChannel && user.nUserID == this.ttclient.getMyUserID() && this.joinchannel != null) {
@@ -3341,6 +3556,43 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         if (isIgnoredNick(fromNick)) {
             applyIgnoreSubscription(textmessage.nFromUserID, fromNick);
             return;
+        }
+        int myUidForShield = this.ttclient != null ? this.ttclient.getMyUserID() : -1;
+        boolean isExternalChatMsg = textmessage.nFromUserID != myUidForShield
+                && textmessage.nMsgType != dk.bearware.TextMsgType.MSGTYPE_CUSTOM;
+        if (isExternalChatMsg) {
+            String displaySender = !TextUtils.isEmpty(fromNick) ? fromNick : ("#" + textmessage.nFromUserID);
+            if (ExtroShield.isAntiFloodZalgoEnabled(getApplicationContext())) {
+                ExtroShield.FloodVerdict floodVerdict = ExtroShield.checkFlood(textmessage.nFromUserID);
+                if (floodVerdict != ExtroShield.FloodVerdict.ALLOWED) {
+                    this.lastShieldDroppedMsg = textmessage;
+                    if (floodVerdict == ExtroShield.FloodVerdict.BLOCKED_FIRST) {
+                        String floodNotice = getString(R.string.shield_flood_blocked_notice, displaySender);
+                        ExtroShield.logEvent(ExtroShield.CAT_FLOOD, floodNotice);
+                        getChatLogTextMsgs().add(MyTextMessage.createLogMsg(MyTextMessage.MSGTYPE_LOG_INFO, floodNotice));
+                        Toast.makeText(this, floodNotice, Toast.LENGTH_SHORT).show();
+                    }
+                    return;
+                }
+                if (textmessage.szMessage != null) {
+                    ExtroShield.SanitizeResult san = ExtroShield.sanitizeUnicode(textmessage.szMessage);
+                    if (san.modified) {
+                        textmessage.szMessage = san.text;
+                        ExtroShield.logEvent(ExtroShield.CAT_UNICODE,
+                                getString(R.string.shield_log_unicode_msg, displaySender));
+                    }
+                }
+            }
+            if (ExtroShield.isSafeLinkGuardEnabled(getApplicationContext()) && textmessage.szMessage != null) {
+                ExtroShield.LinkScanResult linkScan = ExtroShield.scanTextLinks(textmessage.szMessage);
+                if (linkScan.suspicious) {
+                    String reasons = ExtroShield.describeThreats(getApplicationContext(), linkScan.threats);
+                    String firstUrl = linkScan.suspiciousUrls.isEmpty() ? "" : linkScan.suspiciousUrls.get(0);
+                    ExtroShield.logEvent(ExtroShield.CAT_LINK,
+                            getString(R.string.shield_log_dangerous_link, displaySender, reasons, firstUrl));
+                    textmessage.szMessage = ExtroShield.annotateMessageIfSuspicious(getApplicationContext(), textmessage.szMessage, linkScan);
+                }
+            }
         }
         if (pref.getBoolean(Preferences.PREF_ANTISPAM_ENABLED, false)
                 && !this.antispam_blocked.contains(Integer.valueOf(textmessage.nFromUserID))

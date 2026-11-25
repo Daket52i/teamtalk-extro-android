@@ -43,6 +43,8 @@ import org.teamtalkextro.backend.KaraokeMixer;
 import org.teamtalkextro.backend.SoundboardEngine;
 import org.teamtalkextro.backend.VoiceChanger;
 import org.teamtalkextro.data.ScreenShareAudioHelper;
+import org.teamtalkextro.data.UserNotesStore;
+import org.teamtalkextro.security.ExtroShield;
 import org.teamtalkextro.utils.ScreenShareManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -559,6 +561,43 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             shareAudioItem.setEnabled(true).setVisible(true);
         }
 
+        MenuItem studioScenesItem = menu.findItem(R.id.action_studio_scenes);
+        if (studioScenesItem != null) {
+            studioScenesItem.setEnabled(true).setVisible(true);
+        }
+
+        MenuItem panicMuteItem = menu.findItem(R.id.action_panic_mute);
+        if (panicMuteItem != null) {
+            panicMuteItem.setEnabled(true).setVisible(true);
+        }
+
+        MenuItem whoTalkingItem = menu.findItem(R.id.action_who_is_talking);
+        if (whoTalkingItem != null) {
+            boolean connected = getClient() != null && (getClient().getFlags() & ClientFlag.CLIENT_CONNECTED) != 0;
+            whoTalkingItem.setEnabled(connected).setVisible(true);
+        }
+
+        MenuItem shieldItem = menu.findItem(R.id.action_extro_shield);
+        if (shieldItem != null) {
+            shieldItem.setEnabled(true).setVisible(true);
+        }
+
+        MenuItem notesItem = menu.findItem(R.id.action_user_notes);
+        if (notesItem != null) {
+            notesItem.setEnabled(true).setVisible(true);
+        }
+
+        MenuItem sleepTimerItem = menu.findItem(R.id.action_sleep_timer);
+        if (sleepTimerItem != null) {
+            TeamTalkService srv = getService();
+            if (srv != null && srv.isSleepTimerActive()) {
+                sleepTimerItem.setTitle(getString(R.string.action_sleep_timer_active, srv.formatSleepTimerRemaining()));
+            } else {
+                sleepTimerItem.setTitle(R.string.action_sleep_timer);
+            }
+            sleepTimerItem.setEnabled(true).setVisible(true);
+        }
+
         return super.onPrepareOptionsMenu(menu);
     }
 
@@ -568,7 +607,25 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         File recordedFile;
         MaterialAlertDialogBuilder alert = new MaterialAlertDialogBuilder(this);
         int itemId = item.getItemId();
-        if (itemId == R.id.action_voice_changer) {
+        if (itemId == R.id.action_studio_scenes) {
+            showStudioScenesDialog();
+            return true;
+        } else if (itemId == R.id.action_panic_mute) {
+            performPanicMute();
+            return true;
+        } else if (itemId == R.id.action_who_is_talking) {
+            announceActiveSpeakers();
+            return true;
+        } else if (itemId == R.id.action_extro_shield) {
+            showExtroShieldDialog();
+            return true;
+        } else if (itemId == R.id.action_user_notes) {
+            showAllUserNotesDialog();
+            return true;
+        } else if (itemId == R.id.action_sleep_timer) {
+            showSleepTimerDialog();
+            return true;
+        } else if (itemId == R.id.action_voice_changer) {
             showVoiceChangerDialog();
             return true;
         } else if (itemId == R.id.action_karaoke) {
@@ -1862,8 +1919,37 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
 
         final VoicePreviewLoopback preview = new VoicePreviewLoopback();
 
+        final AlertDialog[] vcDialogRef = new AlertDialog[1];
+        float vcDensity = getResources().getDisplayMetrics().density;
+        LinearLayout customTitle = new LinearLayout(this);
+        customTitle.setOrientation(LinearLayout.VERTICAL);
+        int hPad = Math.round(24 * vcDensity);
+        customTitle.setPadding(hPad, Math.round(18 * vcDensity), hPad, Math.round(8 * vcDensity));
+
+        TextView titleTv = new TextView(this);
+        titleTv.setText(R.string.voice_changer_title);
+        titleTv.setTextSize(20f);
+        titleTv.setTypeface(null, android.graphics.Typeface.BOLD);
+        customTitle.addView(titleTv);
+
+        Button scenesBtn = new Button(this);
+        scenesBtn.setText(R.string.action_studio_scenes);
+        scenesBtn.setAllCaps(false);
+        LinearLayout.LayoutParams scenesLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        scenesLp.topMargin = Math.round(8 * vcDensity);
+        scenesBtn.setLayoutParams(scenesLp);
+        scenesBtn.setOnClickListener(v -> {
+            preview.stop();
+            if (vcDialogRef[0] != null) {
+                vcDialogRef[0].dismiss();
+            }
+            showStudioScenesDialog();
+        });
+        customTitle.addView(scenesBtn);
+
         MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this);
-        builder.setTitle(R.string.voice_changer_title);
+        builder.setCustomTitle(customTitle);
         builder.setSingleChoiceItems(effectNames, current, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
@@ -1890,6 +1976,7 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         builder.setNegativeButton(android.R.string.cancel, null);
 
         final AlertDialog dialog = builder.create();
+        vcDialogRef[0] = dialog;
         dialog.setOnDismissListener(d -> preview.stop());
         dialog.show();
 
@@ -2042,6 +2129,417 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                             getService().onVoiceChangerModeChanged();
                         }
                     }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void announceAccessibilityAndTts(String text) {
+        if (TextUtils.isEmpty(text)) return;
+        try {
+            View decor = getWindow() != null ? getWindow().getDecorView() : null;
+            if (decor != null) {
+                decor.announceForAccessibility(text);
+            }
+        } catch (Throwable ignored) {}
+        try {
+            if (this.ttsWrapper != null && !this.ttsWrapper.isMuted()) {
+                this.ttsWrapper.speak(text);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private void performPanicMute() {
+        TeamTalkService service = getService();
+        if (service != null) {
+            service.triggerPanicMute();
+        } else {
+            VoiceChanger.setMode(VoiceChanger.Mode.OFF);
+            PreferenceManager.getDefaultSharedPreferences(getApplicationContext())
+                    .edit()
+                    .putInt(Preferences.PREF_VOICE_CHANGER_MODE, VoiceChanger.Mode.OFF.getId())
+                    .apply();
+            ExtroShield.logEvent(ExtroShield.CAT_PANIC, getString(R.string.shield_log_panic_mute));
+        }
+        int gain = ((Integer) this.prefs.get(Preferences.PREF_SOUNDSYSTEM_MICROPHONEGAIN, Integer.valueOf(SoundLevel.SOUND_GAIN_DEFAULT))).intValue();
+        adjustTxState(false);
+        adjustVoxState(false, gain);
+        invalidateOptionsMenu();
+
+        String msg = getString(R.string.shield_panic_mute_done);
+        Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+        announceAccessibilityAndTts(msg);
+    }
+
+    private void announceActiveSpeakers() {
+        TeamTalkService service = getService();
+        TeamTalkBase client = getClient();
+        if (service == null || client == null) {
+            Toast.makeText(this, R.string.who_is_talking_need_channel, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        int chanId = client.getMyChannelID();
+        if (chanId <= 0 && this.curchannel != null) {
+            chanId = this.curchannel.nChannelID;
+        }
+        if (chanId <= 0) {
+            String needMsg = getString(R.string.who_is_talking_need_channel);
+            Toast.makeText(this, needMsg, Toast.LENGTH_SHORT).show();
+            announceAccessibilityAndTts(needMsg);
+            return;
+        }
+
+        int myUserId = client.getMyUserID();
+        java.util.List<String> speakers = new java.util.ArrayList<>();
+        java.util.Map<Integer, User> userMap = service.getUsers();
+        if (userMap != null) {
+            for (User u : userMap.values()) {
+                if (u == null || u.nChannelID != chanId) continue;
+                boolean talkingVoice = (u.uUserState & dk.bearware.UserState.USERSTATE_VOICE) != 0;
+                boolean talkingMedia = (u.uUserState & (dk.bearware.UserState.USERSTATE_MEDIAFILE_AUDIO
+                        | dk.bearware.UserState.USERSTATE_MEDIAFILE_VIDEO
+                        | dk.bearware.UserState.USERSTATE_MEDIAFILE)) != 0;
+                if (u.nUserID == myUserId) {
+                    if (service.isVoiceTransmitting()) talkingVoice = true;
+                    if (service.isStreamingMedia() || service.isKaraokeActive()) talkingMedia = true;
+                }
+                if (talkingVoice || talkingMedia) {
+                    String name = Utils.getDisplayName(this, u);
+                    String role;
+                    if (talkingVoice && talkingMedia) {
+                        role = getString(R.string.who_is_talking_role_both);
+                    } else if (talkingMedia) {
+                        role = getString(R.string.who_is_talking_role_media);
+                    } else {
+                        role = getString(R.string.who_is_talking_role_voice);
+                    }
+                    speakers.add(name + " (" + role + ")");
+                }
+            }
+        }
+
+        String summary = speakers.isEmpty()
+                ? getString(R.string.who_is_talking_none)
+                : getString(R.string.who_is_talking_list, TextUtils.join(", ", speakers));
+        Toast.makeText(this, summary, Toast.LENGTH_LONG).show();
+        announceAccessibilityAndTts(summary);
+    }
+
+    private void showStudioScenesDialog() {
+        final String[] sceneLabels = new String[]{
+                getString(R.string.studio_scene_normal),
+                getString(R.string.studio_scene_dj),
+                getString(R.string.studio_scene_karaoke),
+                getString(R.string.studio_scene_autotune),
+                getString(R.string.studio_scene_prank)
+        };
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.studio_scenes_title)
+                .setItems(sceneLabels, (dialog, which) -> applyStudioScene(which, sceneLabels[which]))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void applyStudioScene(int sceneIdx, String label) {
+        VoiceChanger.Mode mode;
+        boolean ducking;
+        Boolean karaokeAutoStatus = null;
+        switch (sceneIdx) {
+            case 1:
+                mode = VoiceChanger.Mode.BROADCAST_DJ;
+                ducking = true;
+                break;
+            case 2:
+                mode = VoiceChanger.Mode.CONCERT_HALL;
+                ducking = true;
+                karaokeAutoStatus = Boolean.TRUE;
+                break;
+            case 3:
+                mode = VoiceChanger.Mode.AUTOTUNE;
+                ducking = true;
+                break;
+            case 4:
+                mode = VoiceChanger.Mode.DEMON;
+                ducking = false;
+                break;
+            case 0:
+            default:
+                mode = VoiceChanger.Mode.OFF;
+                ducking = false;
+                break;
+        }
+
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+        SharedPreferences.Editor ed = sp.edit()
+                .putInt(Preferences.PREF_VOICE_CHANGER_MODE, mode.getId())
+                .putBoolean(Preferences.PREF_KARAOKE_DUCKING, ducking)
+                .putBoolean(Preferences.PREF_SOUNDSYSTEM_DUCKING_ENABLED, ducking);
+        if (karaokeAutoStatus != null) {
+            ed.putBoolean(Preferences.PREF_KARAOKE_AUTO_STATUS, karaokeAutoStatus.booleanValue());
+        }
+        ed.apply();
+
+        VoiceChanger.setMode(mode);
+        TeamTalkService service = getService();
+        if (service != null) {
+            service.onVoiceChangerModeChanged();
+            KaraokeMixer mixer = service.getKaraokeMixer();
+            if (mixer != null) {
+                mixer.setDuckingEnabled(ducking);
+            }
+            if (karaokeAutoStatus != null) {
+                service.updateKaraokeAutoStatus(karaokeAutoStatus.booleanValue());
+            }
+        }
+
+        String msg = getString(R.string.studio_scene_applied, label);
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+        announceAccessibilityAndTts(msg);
+    }
+
+    private void showExtroShieldDialog() {
+        float d = getResources().getDisplayMetrics().density;
+        int pad = Math.round(20 * d);
+        int gap = Math.round(10 * d);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(pad, Math.round(12 * d), pad, Math.round(8 * d));
+        scroll.addView(layout);
+
+        // 1. TLS connection security badge
+        TextView tlsBadge = new TextView(this);
+        tlsBadge.setTextSize(15f);
+        tlsBadge.setTypeface(null, android.graphics.Typeface.BOLD);
+        tlsBadge.setPadding(0, 0, 0, gap);
+        TeamTalkService srv = getService();
+        if (srv != null && srv.getServerEntry() != null) {
+            String hostPort = srv.getServerEntry().ipaddr + ":" + srv.getServerEntry().tcpport;
+            if (srv.isConnectionEncrypted()) {
+                tlsBadge.setText(getString(R.string.shield_tls_encrypted, hostPort));
+                tlsBadge.setTextColor(0xFF2E7D32);
+            } else {
+                tlsBadge.setText(getString(R.string.shield_tls_unencrypted, hostPort));
+                tlsBadge.setTextColor(0xFFD84315);
+            }
+        } else {
+            tlsBadge.setText(R.string.shield_tls_disconnected);
+        }
+        layout.addView(tlsBadge);
+
+        // 2. Safe Link Guard switch
+        MaterialSwitch swLinks = new MaterialSwitch(this);
+        swLinks.setText(R.string.shield_switch_safe_links);
+        swLinks.setChecked(ExtroShield.isSafeLinkGuardEnabled(this));
+        swLinks.setOnCheckedChangeListener((btn, checked) -> ExtroShield.setSafeLinkGuardEnabled(MainActivity.this, checked));
+        layout.addView(swLinks);
+
+        // 3. Anti-Flood & Anti-Zalgo / Unicode Spoof switch
+        MaterialSwitch swFloodZalgo = new MaterialSwitch(this);
+        swFloodZalgo.setText(R.string.shield_switch_anti_flood_zalgo);
+        swFloodZalgo.setChecked(ExtroShield.isAntiFloodZalgoEnabled(this));
+        swFloodZalgo.setOnCheckedChangeListener((btn, checked) -> ExtroShield.setAntiFloodZalgoEnabled(MainActivity.this, checked));
+        layout.addView(swFloodZalgo);
+
+        final AlertDialog[] shieldDialogRef = new AlertDialog[1];
+
+        // 4. Panic Mute button
+        Button btnPanic = new Button(this);
+        btnPanic.setText(R.string.shield_btn_panic_mute);
+        btnPanic.setAllCaps(false);
+        LinearLayout.LayoutParams panicLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panicLp.topMargin = gap;
+        btnPanic.setLayoutParams(panicLp);
+        btnPanic.setOnClickListener(v -> {
+            if (shieldDialogRef[0] != null) shieldDialogRef[0].dismiss();
+            performPanicMute();
+        });
+        layout.addView(btnPanic);
+
+        // 5. User Notes shortcut button
+        Button btnNotes = new Button(this);
+        btnNotes.setText(R.string.shield_btn_user_notes);
+        btnNotes.setAllCaps(false);
+        LinearLayout.LayoutParams notesLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        notesLp.topMargin = Math.round(6 * d);
+        btnNotes.setLayoutParams(notesLp);
+        btnNotes.setOnClickListener(v -> {
+            if (shieldDialogRef[0] != null) shieldDialogRef[0].dismiss();
+            showAllUserNotesDialog();
+        });
+        layout.addView(btnNotes);
+
+        // 6. Security Audit Log header & content
+        TextView logHeader = new TextView(this);
+        logHeader.setText(getString(R.string.shield_audit_log_header, ExtroShield.getAuditLogCount()));
+        logHeader.setTextSize(14f);
+        logHeader.setTypeface(null, android.graphics.Typeface.BOLD);
+        logHeader.setPadding(0, Math.round(14 * d), 0, Math.round(6 * d));
+        layout.addView(logHeader);
+
+        final TextView logView = new TextView(this);
+        logView.setTextSize(12f);
+        logView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        logView.setTextIsSelectable(true);
+        String formattedLog = ExtroShield.formatAuditLog();
+        logView.setText(formattedLog.isEmpty() ? getString(R.string.shield_audit_log_empty) : formattedLog);
+        layout.addView(logView);
+
+        AlertDialog dlg = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.shield_dialog_title)
+                .setView(scroll)
+                .setPositiveButton(android.R.string.ok, null)
+                .setNeutralButton(R.string.shield_btn_copy_log, (dialog, which) -> {
+                    String text = ExtroShield.formatAuditLog();
+                    if (text.isEmpty()) {
+                        Toast.makeText(MainActivity.this, R.string.shield_audit_log_empty, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (cm != null) {
+                        cm.setPrimaryClip(ClipData.newPlainText("ExtroShieldLog", text));
+                        Toast.makeText(MainActivity.this, R.string.shield_log_copied, Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton(R.string.shield_btn_clear_log, (dialog, which) -> {
+                    ExtroShield.clearAuditLog();
+                    Toast.makeText(MainActivity.this, R.string.shield_log_cleared, Toast.LENGTH_SHORT).show();
+                })
+                .create();
+        shieldDialogRef[0] = dlg;
+        dlg.show();
+    }
+
+    private void showAllUserNotesDialog() {
+        final java.util.Map<String, String> allNotes = UserNotesStore.getAllNotes(this);
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.user_notes_title)
+                .setNeutralButton(R.string.user_notes_add, (d, w) -> showAddUserNoteDialog())
+                .setPositiveButton(android.R.string.ok, null);
+
+        if (allNotes.isEmpty()) {
+            builder.setMessage(R.string.user_notes_empty);
+        } else {
+            final java.util.List<String> keys = new java.util.ArrayList<>(allNotes.keySet());
+            final String[] items = new String[keys.size()];
+            for (int i = 0; i < keys.size(); i++) {
+                String k = keys.get(i);
+                items[i] = k + " — " + allNotes.get(k);
+            }
+            builder.setItems(items, (d, which) -> {
+                String chosenKey = keys.get(which);
+                showEditUserNoteDialog(chosenKey, chosenKey, this::showAllUserNotesDialog);
+            });
+        }
+        builder.show();
+    }
+
+    private void showAddUserNoteDialog() {
+        float d = getResources().getDisplayMetrics().density;
+        int pad = Math.round(20 * d);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(pad, Math.round(8 * d), pad, 0);
+
+        final EditText userInput = new EditText(this);
+        userInput.setHint(R.string.user_notes_user_hint);
+        userInput.setSingleLine(true);
+        box.addView(userInput);
+
+        final EditText noteInput = new EditText(this);
+        noteInput.setHint(R.string.user_note_input_hint);
+        box.addView(noteInput);
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.user_notes_add_title)
+                .setView(box)
+                .setPositiveButton(R.string.user_note_save, (dialog, which) -> {
+                    String key = userInput.getText() != null ? userInput.getText().toString().trim() : "";
+                    String note = noteInput.getText() != null ? noteInput.getText().toString().trim() : "";
+                    if (!key.isEmpty() && !note.isEmpty()) {
+                        UserNotesStore.setNote(MainActivity.this, key, note);
+                        Toast.makeText(MainActivity.this, R.string.user_note_saved, Toast.LENGTH_SHORT).show();
+                        showAllUserNotesDialog();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void showEditUserNoteDialog(final String key, final String displayName, final Runnable onDone) {
+        if (TextUtils.isEmpty(key)) return;
+        String existing = UserNotesStore.getNote(this, key);
+        final EditText input = new EditText(this);
+        input.setHint(R.string.user_note_input_hint);
+        input.setText(existing);
+        input.setSelection(existing.length());
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(getString(R.string.user_note_edit_title, displayName))
+                .setView(ThemeHelper.wrapForDialog(input, this))
+                .setPositiveButton(R.string.user_note_save, (d, w) -> {
+                    String text = input.getText() != null ? input.getText().toString().trim() : "";
+                    UserNotesStore.setNote(MainActivity.this, key, text);
+                    Toast.makeText(MainActivity.this,
+                            text.isEmpty() ? R.string.user_note_deleted : R.string.user_note_saved,
+                            Toast.LENGTH_SHORT).show();
+                    if (onDone != null) onDone.run();
+                })
+                .setNeutralButton(R.string.user_note_delete, (d, w) -> {
+                    UserNotesStore.removeNote(MainActivity.this, key);
+                    Toast.makeText(MainActivity.this, R.string.user_note_deleted, Toast.LENGTH_SHORT).show();
+                    if (onDone != null) onDone.run();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void showSleepTimerDialog() {
+        final TeamTalkService srv = getService();
+        if (srv == null) return;
+
+        final int[] presetMinutes = new int[]{0, 15, 30, 60, 90};
+        final String[] labels = new String[]{
+                getString(R.string.sleep_timer_off),
+                getString(R.string.sleep_timer_minutes, 15),
+                getString(R.string.sleep_timer_minutes, 30),
+                getString(R.string.sleep_timer_minutes, 60),
+                getString(R.string.sleep_timer_minutes, 90)
+        };
+
+        String statusText = srv.isSleepTimerActive()
+                ? getString(R.string.sleep_timer_status_remaining, srv.formatSleepTimerRemaining())
+                : getString(R.string.sleep_timer_status_off);
+
+        float d = getResources().getDisplayMetrics().density;
+        LinearLayout titleBox = new LinearLayout(this);
+        titleBox.setOrientation(LinearLayout.VERTICAL);
+        titleBox.setPadding(Math.round(24 * d), Math.round(18 * d), Math.round(24 * d), Math.round(6 * d));
+        TextView titleTv = new TextView(this);
+        titleTv.setText(R.string.sleep_timer_title);
+        titleTv.setTextSize(20f);
+        titleTv.setTypeface(null, android.graphics.Typeface.BOLD);
+        titleBox.addView(titleTv);
+        TextView subTv = new TextView(this);
+        subTv.setText(statusText);
+        subTv.setTextSize(14f);
+        subTv.setPadding(0, Math.round(4 * d), 0, 0);
+        titleBox.addView(subTv);
+
+        new MaterialAlertDialogBuilder(this)
+                .setCustomTitle(titleBox)
+                .setItems(labels, (dialog, which) -> {
+                    int mins = presetMinutes[which];
+                    srv.setSleepTimerMinutes(mins);
+                    invalidateOptionsMenu();
+                    String feedback = mins <= 0
+                            ? getString(R.string.sleep_timer_cancelled)
+                            : getString(R.string.sleep_timer_armed_toast, mins);
+                    Toast.makeText(MainActivity.this, feedback, Toast.LENGTH_SHORT).show();
+                    announceAccessibilityAndTts(feedback);
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
@@ -4304,6 +4802,16 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             userActions.getMenu().findItem(R.id.action_makeop).setTitle(getClient().isChannelOperator(this.selectedUser.nUserID, this.selectedUser.nChannelID) ? R.string.action_revoke_operator : R.string.action_make_operator);
             userActions.getMenu().findItem(R.id.action_select).setTitle(this.userIDS.contains(Integer.valueOf(this.selectedUser.nUserID)) ? R.string.action_deselect : R.string.action_select);
             userActions.getMenu().findItem(R.id.action_select).setEnabled(moveRight).setVisible(moveRight);
+            MenuItem noteItem = userActions.getMenu().findItem(R.id.action_user_note);
+            if (noteItem != null) {
+                String existingNote = UserNotesStore.getNoteForUser(this, this.selectedUser);
+                if (!existingNote.isEmpty()) {
+                    String preview = existingNote.length() > 26 ? existingNote.substring(0, 26) + "…" : existingNote;
+                    noteItem.setTitle(getString(R.string.action_user_note_preview, preview));
+                } else {
+                    noteItem.setTitle(R.string.action_user_note);
+                }
+            }
             userActions.show();
             return true;
         }
@@ -4373,6 +4881,12 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             startActivityForResult(new Intent(this, (Class<?>) UserPropActivity.class).putExtra("userid", this.selectedUser.nUserID), 3);
         } else if (itemId == R.id.action_message) {
             startActivity(new Intent(this, (Class<?>) TextMessageActivity.class).putExtra("userid", this.selectedUser.nUserID));
+        } else if (itemId == R.id.action_user_note) {
+            if (this.selectedUser != null) {
+                String noteKey = UserNotesStore.keyForUser(this.selectedUser);
+                String displayName = Utils.getDisplayName(this, this.selectedUser);
+                showEditUserNoteDialog(noteKey, displayName, null);
+            }
         } else if (itemId == R.id.action_kickchan) {
             alert.setMessage(getString(R.string.kick_confirmation, new Object[]{this.selectedUser.szNickname}));
             alert.setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() { 
@@ -4485,19 +4999,23 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         public void lambda$onMenuItemClick$13(DialogInterface dialog, int whichButton) {
         getClient().doBanUser(this.selectedUser.nUserID, this.selectedUser.nChannelID);
         getClient().doKickUser(this.selectedUser.nUserID, this.selectedUser.nChannelID);
+        ExtroShield.logEvent(ExtroShield.CAT_MODERATION, getString(R.string.shield_log_ban_user, Utils.getDisplayName(this, this.selectedUser)));
     }
 
         public void lambda$onMenuItemClick$14(DialogInterface dialog, int whichButton) {
         getClient().doBanUser(this.selectedUser.nUserID, 0);
         getClient().doKickUser(this.selectedUser.nUserID, 0);
+        ExtroShield.logEvent(ExtroShield.CAT_MODERATION, getString(R.string.shield_log_ban_user, Utils.getDisplayName(this, this.selectedUser)));
     }
 
         public void lambda$onMenuItemClick$15(DialogInterface dialog, int whichButton) {
         getClient().doKickUser(this.selectedUser.nUserID, this.selectedUser.nChannelID);
+        ExtroShield.logEvent(ExtroShield.CAT_MODERATION, getString(R.string.shield_log_kick_user, Utils.getDisplayName(this, this.selectedUser)));
     }
 
         public void lambda$onMenuItemClick$16(DialogInterface dialog, int whichButton) {
         getClient().doKickUser(this.selectedUser.nUserID, 0);
+        ExtroShield.logEvent(ExtroShield.CAT_MODERATION, getString(R.string.shield_log_kick_user, Utils.getDisplayName(this, this.selectedUser)));
     }
 
         public void lambda$onMenuItemClick$17(EditText input, DialogInterface dialog, int whichButton) {
@@ -5107,10 +5625,22 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
     @Override
     public void onServiceConnected(TeamTalkService service) {
         initializeTeamTalkService(service);
+        if (service != null) {
+            service.setSleepTimerExpiredListener(() -> runOnUiThread(() -> {
+                String msg = getString(R.string.sleep_timer_expired_toast);
+                announceAccessibilityAndTts(msg);
+                if (!isFinishing()) {
+                    finish();
+                }
+            }));
+        }
     }
 
     @Override
     public void onServiceDisconnected(TeamTalkService service) {
+        if (service != null) {
+            service.setSleepTimerExpiredListener(null);
+        }
         closeTeamTalkService(service);
     }
 
@@ -5413,6 +5943,9 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
 
     @Override
     public void onCmdUserTextMessage(TextMessage textmessage) {
+        if (getService() != null && getService().wasTextMessageDroppedByShield(textmessage)) {
+            return;
+        }
         if (textmessage.nMsgType == TextMsgType.MSGTYPE_CUSTOM) {
             if (textmessage.szMessage != null && textmessage.szMessage.startsWith("typing\r\n")) {
                 boolean typing = textmessage.szMessage.endsWith("1");

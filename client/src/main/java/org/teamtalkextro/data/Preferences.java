@@ -157,4 +157,9 @@ public class Preferences {
 
     public static final String PREF_WELCOME_SHOWN = "welcome_shown";
     public static final String PREF_IGNORED_UPDATE_VERSION = "ignored_update_version";
+
+    public static final String
+            PREF_SHIELD_SAFE_LINKS = "extro_shield_safe_links",
+            PREF_SHIELD_ANTI_FLOOD_ZALGO = "extro_shield_anti_flood_zalgo",
+            PREF_USER_NOTES_JSON = "extro_user_notes_json";
 }

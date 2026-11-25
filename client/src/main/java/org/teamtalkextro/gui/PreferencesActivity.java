@@ -475,28 +475,9 @@ public class PreferencesActivity extends PreferenceActivity implements TeamTalkC
                 }
                 final Uri uri = data.getData();
                 if (requestCode == 4001) {
-                    new Thread(() -> {
-                        SettingsBackupManager.ExportResult res = SettingsBackupManager.exportToUri(act, uri);
-                        act.runOnUiThread(() -> {
-                            if (res.success) {
-                                Toast.makeText(act, act.getString(R.string.backup_export_success, res.serverCount, res.prefCount), Toast.LENGTH_LONG).show();
-                            } else {
-                                Toast.makeText(act, act.getString(R.string.backup_export_failed, res.errorMessage), Toast.LENGTH_LONG).show();
-                            }
-                        });
-                    }).start();
+                    BackupDialogHelper.promptExportPasswordAndRun(act, uri, null);
                 } else if (requestCode == 4002) {
-                    new Thread(() -> {
-                        SettingsBackupManager.ImportResult res = SettingsBackupManager.importFromUri(act, uri);
-                        act.runOnUiThread(() -> {
-                            if (res.success) {
-                                Toast.makeText(act, act.getString(R.string.backup_import_success,
-                                        res.sourcePlatform, res.serversAdded, res.serversSkipped, res.prefsRestored), Toast.LENGTH_LONG).show();
-                            } else {
-                                Toast.makeText(act, act.getString(R.string.backup_import_failed, res.errorMessage), Toast.LENGTH_LONG).show();
-                            }
-                        });
-                    }).start();
+                    BackupDialogHelper.inspectAndImport(act, uri, null, null);
                 }
             }
 
