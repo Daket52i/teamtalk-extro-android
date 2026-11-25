@@ -391,9 +391,11 @@ public final class SettingsBackupManager {
             extro.addProperty("karaoke_auto_status", prefs.getBoolean(Preferences.PREF_KARAOKE_AUTO_STATUS, true));
             root.add("extro", extro);
 
-            // 3. Extro Shield settings & Local User Notes
+            // 3. Extro Shield settings, Local User Notes, AFK & Quick Phrases
             root.add("shield_settings", ExtroShield.exportSettingsJson(context));
             root.add("user_notes", UserNotesStore.toJsonObject(context));
+            root.addProperty("afk_message", AfkAndQuickPhrases.getAfkMessage(context));
+            root.add("quick_phrases", AfkAndQuickPhrases.exportQuickPhrasesJson(context));
 
             // 4. Full Android SharedPreferences + type metadata
             JsonObject androidPrefs = new JsonObject();
@@ -672,12 +674,22 @@ public final class SettingsBackupManager {
             editor.apply();
             VoiceChanger.loadFromPreferences(context);
 
-            // 4. Restore Extro Shield settings & User Notes (cross-platform!)
+            // 4. Restore Extro Shield settings, User Notes, AFK & Quick Phrases (backwards-compatible!)
             if (root.has("shield_settings") && root.get("shield_settings").isJsonObject()) {
                 prefsRestored += ExtroShield.importSettingsJson(context, root.getAsJsonObject("shield_settings"));
             }
             if (root.has("user_notes") && root.get("user_notes").isJsonObject()) {
                 prefsRestored += UserNotesStore.importFromJsonObject(context, root.getAsJsonObject("user_notes"));
+            }
+            if (root.has("afk_message") && !root.get("afk_message").isJsonNull()) {
+                String afkMsg = getString(root, "afk_message", "");
+                if (!afkMsg.isEmpty()) {
+                    AfkAndQuickPhrases.setAfkMessage(context, afkMsg);
+                    prefsRestored++;
+                }
+            }
+            if (root.has("quick_phrases") && root.get("quick_phrases").isJsonArray()) {
+                prefsRestored += AfkAndQuickPhrases.importQuickPhrasesJson(context, root.getAsJsonArray("quick_phrases"));
             }
 
             // 5. Restore embedded TTMediaBot profiles (backwards-compatible)

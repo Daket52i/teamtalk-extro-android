@@ -41,7 +41,9 @@ import androidx.core.content.ContextCompat;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import org.teamtalkextro.backend.KaraokeMixer;
 import org.teamtalkextro.backend.SoundboardEngine;
+import org.teamtalkextro.backend.TtsAirAnnouncer;
 import org.teamtalkextro.backend.VoiceChanger;
+import org.teamtalkextro.data.AfkAndQuickPhrases;
 import org.teamtalkextro.data.ScreenShareAudioHelper;
 import org.teamtalkextro.data.UserNotesStore;
 import org.teamtalkextro.security.ExtroShield;
@@ -108,10 +110,12 @@ import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.android.material.navigation.NavigationBarView;
 import com.google.android.material.badge.BadgeDrawable;
 import android.text.InputType;
+import dk.bearware.AudioCodec;
 import dk.bearware.Channel;
 import dk.bearware.ChannelType;
 import dk.bearware.ClientFlag;
 import dk.bearware.ClientStatistics;
+import dk.bearware.Codec;
 import dk.bearware.Constants;
 import dk.bearware.MediaFileInfo;
 import dk.bearware.MediaFilePlayback;
@@ -128,6 +132,7 @@ import dk.bearware.User;
 import dk.bearware.UserAccount;
 import dk.bearware.UserRight;
 import dk.bearware.UserState;
+import dk.bearware.UserStatistics;
 import dk.bearware.UserType;
 import dk.bearware.VideoCodec;
 import dk.bearware.events.ClientEventListener;
@@ -551,10 +556,52 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             botItem.setTitle(botTitleRes);
             botItem.setEnabled(true).setVisible(true);
         }
-        MenuItem botTopItem = menu.findItem(R.id.action_embedded_bot_top);
-        if (botTopItem != null) {
-            botTopItem.setTitle(botTitleRes);
-            botTopItem.setEnabled(true).setVisible(true);
+
+        MenuItem ttsAirItem = menu.findItem(R.id.action_tts_air);
+        if (ttsAirItem != null) {
+            ttsAirItem.setEnabled(isLeaveable).setVisible(true);
+        }
+
+        MenuItem audioRouteItem = menu.findItem(R.id.action_audio_route);
+        if (audioRouteItem != null) {
+            audioRouteItem.setEnabled(true).setVisible(true);
+        }
+
+        MenuItem soloClearItem = menu.findItem(R.id.action_solo_clear);
+        if (soloClearItem != null) {
+            TeamTalkService srv = getService();
+            boolean soloActive = srv != null && srv.isSoloActive();
+            soloClearItem.setVisible(soloActive).setEnabled(soloActive);
+            if (soloActive) {
+                User soloUser = srv.getUsers().get(Integer.valueOf(srv.getSoloUserId()));
+                if (soloUser != null) {
+                    soloClearItem.setTitle(getString(R.string.action_solo_clear_target, Utils.getDisplayName(this, soloUser)));
+                } else {
+                    soloClearItem.setTitle(R.string.action_solo_clear);
+                }
+            }
+        }
+
+        MenuItem quickPhrasesItem = menu.findItem(R.id.action_quick_phrases);
+        if (quickPhrasesItem != null) {
+            quickPhrasesItem.setEnabled(isLeaveable).setVisible(true);
+        }
+
+        MenuItem partyToolsItem = menu.findItem(R.id.action_party_tools);
+        if (partyToolsItem != null) {
+            partyToolsItem.setEnabled(true).setVisible(true);
+        }
+
+        MenuItem radarItem = menu.findItem(R.id.action_connection_radar);
+        if (radarItem != null) {
+            radarItem.setEnabled(true).setVisible(true);
+        }
+
+        MenuItem afkItem = menu.findItem(R.id.action_afk_mode);
+        if (afkItem != null) {
+            boolean afkOn = getService() != null && getService().isAfkEnabled();
+            afkItem.setTitle(afkOn ? R.string.action_afk_mode_active : R.string.action_afk_mode);
+            afkItem.setEnabled(true).setVisible(true);
         }
 
         MenuItem shareScreenItem = menu.findItem(R.id.action_share_screen);
@@ -642,7 +689,34 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         } else if (itemId == R.id.action_soundboard) {
             showSoundboardDialog();
             return true;
-        } else if (itemId == R.id.action_embedded_bot || itemId == R.id.action_embedded_bot_top) {
+        } else if (itemId == R.id.action_tts_air) {
+            showTtsAirDialog();
+            return true;
+        } else if (itemId == R.id.action_audio_route) {
+            showAudioRouteDialog();
+            return true;
+        } else if (itemId == R.id.action_solo_clear) {
+            if (getService() != null && getService().isSoloActive()) {
+                getService().clearSoloMode();
+                String msg = getString(R.string.solo_disabled_toast);
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+                announceAccessibilityAndTts(msg);
+                invalidateOptionsMenu();
+            }
+            return true;
+        } else if (itemId == R.id.action_quick_phrases) {
+            showQuickPhrasesDialog();
+            return true;
+        } else if (itemId == R.id.action_party_tools) {
+            showPartyToolsDialog();
+            return true;
+        } else if (itemId == R.id.action_connection_radar) {
+            showConnectionRadarDialog();
+            return true;
+        } else if (itemId == R.id.action_afk_mode) {
+            showAfkDialog();
+            return true;
+        } else if (itemId == R.id.action_embedded_bot) {
             startActivity(new Intent(this, BotManagerActivity.class));
             return true;
         } else if (itemId == R.id.action_share_screen) {
@@ -1619,17 +1693,6 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         btnSoundboard.setOnClickListener(v -> showSoundboardDialog());
         layout.addView(btnSoundboard);
 
-        // Embedded Music Bot shortcut button
-        final Button btnEmbeddedBot = new Button(this);
-        btnEmbeddedBot.setText(R.string.action_embedded_bot);
-        btnEmbeddedBot.setAllCaps(false);
-        LinearLayout.LayoutParams botLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        botLp.topMargin = gap;
-        btnEmbeddedBot.setLayoutParams(botLp);
-        btnEmbeddedBot.setOnClickListener(v -> startActivity(new Intent(MainActivity.this, BotManagerActivity.class)));
-        layout.addView(btnEmbeddedBot);
-
         gainBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
@@ -2561,6 +2624,703 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                     announceAccessibilityAndTts(feedback);
                 })
                 .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    // --- v5.34.0 Feature 1: TTS to Air ("Talking DJ") ---
+
+    private void showTtsAirDialog() {
+        final TeamTalkService service = getService();
+        final TeamTalkBase client = getClient();
+        if (service == null || client == null || client.getMyChannelID() <= 0) {
+            Toast.makeText(this, R.string.soundboard_need_channel, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        float d = getResources().getDisplayMetrics().density;
+        int pad = Math.round(20 * d);
+        int gap = Math.round(8 * d);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(pad, Math.round(12 * d), pad, Math.round(8 * d));
+        scroll.addView(layout);
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText(R.string.tts_air_subtitle);
+        subtitle.setPadding(0, 0, 0, gap);
+        layout.addView(subtitle);
+
+        final EditText textInput = new EditText(this);
+        textInput.setHint(R.string.tts_air_input_hint);
+        textInput.setMinLines(2);
+        textInput.setMaxLines(4);
+        textInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        layout.addView(textInput);
+
+        TextView presetsLabel = new TextView(this);
+        presetsLabel.setText(R.string.tts_air_presets_label);
+        presetsLabel.setTypeface(null, android.graphics.Typeface.BOLD);
+        presetsLabel.setPadding(0, Math.round(10 * d), 0, Math.round(4 * d));
+        layout.addView(presetsLabel);
+
+        final int[] presetRes = new int[]{
+                R.string.tts_air_preset_1,
+                R.string.tts_air_preset_2,
+                R.string.tts_air_preset_3,
+                R.string.tts_air_preset_4,
+                R.string.tts_air_preset_5
+        };
+        for (int resId : presetRes) {
+            final String phrase = getString(resId);
+            Button chipBtn = new Button(this);
+            chipBtn.setText(phrase);
+            chipBtn.setAllCaps(false);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = Math.round(4 * d);
+            chipBtn.setLayoutParams(lp);
+            chipBtn.setOnClickListener(v -> {
+                textInput.setText(phrase);
+                textInput.setSelection(phrase.length());
+            });
+            layout.addView(chipBtn);
+        }
+
+        // Speech Rate slider (0.6x .. 1.6x, step 0.01 -> progress 0..100, default 40 = 1.0x)
+        final TextView rateLabel = new TextView(this);
+        rateLabel.setText(getString(R.string.tts_air_rate_label, "1.0"));
+        rateLabel.setPadding(0, Math.round(10 * d), 0, Math.round(2 * d));
+        layout.addView(rateLabel);
+
+        final SeekBar rateBar = new SeekBar(this);
+        rateBar.setMax(100);
+        rateBar.setProgress(40);
+        rateBar.setContentDescription(getString(R.string.tts_air_rate_label, "1.0"));
+        rateBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                float val = 0.6f + (progress / 100.0f);
+                String fmt = String.format(java.util.Locale.US, "%.2f", val);
+                String lbl = getString(R.string.tts_air_rate_label, fmt);
+                rateLabel.setText(lbl);
+                seekBar.setContentDescription(lbl);
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        layout.addView(rateBar);
+
+        // Pitch slider (0.6x .. 1.6x, default 40 = 1.0x)
+        final TextView pitchLabel = new TextView(this);
+        pitchLabel.setText(getString(R.string.tts_air_pitch_label, "1.0"));
+        pitchLabel.setPadding(0, Math.round(8 * d), 0, Math.round(2 * d));
+        layout.addView(pitchLabel);
+
+        final SeekBar pitchBar = new SeekBar(this);
+        pitchBar.setMax(100);
+        pitchBar.setProgress(40);
+        pitchBar.setContentDescription(getString(R.string.tts_air_pitch_label, "1.0"));
+        pitchBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                float val = 0.6f + (progress / 100.0f);
+                String fmt = String.format(java.util.Locale.US, "%.2f", val);
+                String lbl = getString(R.string.tts_air_pitch_label, fmt);
+                pitchLabel.setText(lbl);
+                seekBar.setContentDescription(lbl);
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        layout.addView(pitchBar);
+
+        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.tts_air_title)
+                .setView(scroll)
+                .setPositiveButton(R.string.tts_air_btn_speak, null)
+                .setNeutralButton(R.string.tts_air_btn_stop, (d1, w) -> service.stopSoundboard())
+                .setNegativeButton(android.R.string.cancel, null)
+                .create();
+        dialog.setOnShowListener(di -> {
+            Button speakBtn = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (speakBtn != null) {
+                speakBtn.setOnClickListener(v -> {
+                    String phrase = textInput.getText() != null ? textInput.getText().toString().trim() : "";
+                    if (phrase.isEmpty()) {
+                        Toast.makeText(MainActivity.this, R.string.tts_air_empty_text, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    float rate = 0.6f + (rateBar.getProgress() / 100.0f);
+                    float pitch = 0.6f + (pitchBar.getProgress() / 100.0f);
+                    service.speakTtsToAir(phrase, rate, pitch, new TtsAirAnnouncer.Callback() {
+                        @Override
+                        public void onSynthesizing() {
+                            Toast.makeText(MainActivity.this, R.string.tts_air_synthesizing, Toast.LENGTH_SHORT).show();
+                        }
+
+                        @Override
+                        public void onBroadcastStarted(long durationMs) {
+                            String sec = String.format(java.util.Locale.US, "%.1f", durationMs / 1000.0);
+                            Toast.makeText(MainActivity.this, getString(R.string.tts_air_broadcasting, sec), Toast.LENGTH_SHORT).show();
+                        }
+
+                        @Override
+                        public void onError(String message) {
+                            Toast.makeText(MainActivity.this, getString(R.string.tts_air_error, message), Toast.LENGTH_LONG).show();
+                        }
+                    });
+                });
+            }
+        });
+        dialog.show();
+    }
+
+    // --- v5.34.0 Feature 2: Audio Output Route Switcher ---
+
+    private void showAudioRouteDialog() {
+        final TeamTalkService service = getService();
+        if (service == null) return;
+        int currentRoute = service.getCurrentAudioRoute();
+        final String[] routeLabels = new String[]{
+                getString(R.string.audio_route_speaker),
+                getString(R.string.audio_route_earpiece),
+                getString(R.string.audio_route_bluetooth)
+        };
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.audio_route_title)
+                .setSingleChoiceItems(routeLabels, currentRoute, (dialog, which) -> {
+                    service.switchAudioRoute(which);
+                    String msg = getString(R.string.audio_route_switched, routeLabels[which]);
+                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+                    announceAccessibilityAndTts(msg);
+                    dialog.dismiss();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    // --- v5.34.0 Feature 3: Smart AFK Auto-Responder & Quick Phrases ---
+
+    private void showAfkDialog() {
+        final TeamTalkService service = getService();
+        if (service == null) return;
+        float d = getResources().getDisplayMetrics().density;
+        int pad = Math.round(20 * d);
+
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(pad, Math.round(12 * d), pad, Math.round(4 * d));
+
+        final boolean wasEnabled = service.isAfkEnabled();
+        final MaterialSwitch afkSwitch = new MaterialSwitch(this);
+        afkSwitch.setText(R.string.afk_switch_label);
+        afkSwitch.setChecked(wasEnabled);
+        layout.addView(afkSwitch);
+
+        TextView msgLabel = new TextView(this);
+        msgLabel.setText(R.string.afk_message_label);
+        msgLabel.setPadding(0, Math.round(12 * d), 0, Math.round(4 * d));
+        layout.addView(msgLabel);
+
+        final EditText msgInput = new EditText(this);
+        msgInput.setHint(R.string.afk_message_hint);
+        String currentMsg = AfkAndQuickPhrases.getAfkMessage(this);
+        msgInput.setText(currentMsg);
+        msgInput.setSelection(currentMsg.length());
+        msgInput.setSingleLine(true);
+        layout.addView(msgInput);
+
+        int missedCount = service.getAfkMissedCount();
+        if (wasEnabled || missedCount > 0) {
+            TextView missedTv = new TextView(this);
+            missedTv.setText(getString(R.string.afk_missed_counter, missedCount));
+            missedTv.setPadding(0, Math.round(10 * d), 0, 0);
+            missedTv.setTypeface(null, android.graphics.Typeface.BOLD);
+            layout.addView(missedTv);
+        }
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.afk_dialog_title)
+                .setView(layout)
+                .setPositiveButton(R.string.afk_btn_save, (dialog, which) -> {
+                    boolean nextEnabled = afkSwitch.isChecked();
+                    String msg = msgInput.getText() != null ? msgInput.getText().toString().trim() : "";
+                    java.util.List<AfkAndQuickPhrases.MissedPm> missed = service.setAfkEnabled(nextEnabled, msg);
+                    invalidateOptionsMenu();
+                    String feedback = getString(nextEnabled ? R.string.afk_enabled_toast : R.string.afk_disabled_toast);
+                    Toast.makeText(MainActivity.this, feedback, Toast.LENGTH_SHORT).show();
+                    announceAccessibilityAndTts(feedback);
+                    if (!nextEnabled && missed != null && !missed.isEmpty()) {
+                        showMissedPmsSummaryDialog(missed);
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void showMissedPmsSummaryDialog(java.util.List<AfkAndQuickPhrases.MissedPm> missed) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < missed.size(); i++) {
+            if (i > 0) sb.append('\n');
+            sb.append(missed.get(i).formatLine());
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(getString(R.string.afk_missed_summary_title, missed.size()))
+                .setMessage(sb.toString())
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+    }
+
+    private boolean sendChannelChatMessage(String text) {
+        TeamTalkBase client = getClient();
+        if (client == null || client.getMyChannelID() <= 0 || TextUtils.isEmpty(text)) {
+            return false;
+        }
+        MyTextMessage textmsg = new MyTextMessage();
+        textmsg.nMsgType = TextMsgType.MSGTYPE_CHANNEL;
+        textmsg.nChannelID = client.getMyChannelID();
+        textmsg.szMessage = text;
+        int cmdid = 0;
+        for (MyTextMessage part : textmsg.split()) {
+            cmdid = client.doTextMessage(part);
+        }
+        if (cmdid > 0) {
+            this.activecmds.put(cmdid, CmdComplete.CMD_COMPLETE_TEXTMSG);
+            return true;
+        }
+        return false;
+    }
+
+    private void showQuickPhrasesDialog() {
+        final TeamTalkBase client = getClient();
+        if (client == null || client.getMyChannelID() <= 0) {
+            Toast.makeText(this, R.string.quick_phrases_need_channel, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final java.util.List<String> phrases = AfkAndQuickPhrases.getQuickPhrases(this);
+        float d = getResources().getDisplayMetrics().density;
+        int pad = Math.round(16 * d);
+        int gap = Math.round(6 * d);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(pad, Math.round(10 * d), pad, Math.round(6 * d));
+        scroll.addView(layout);
+
+        final AlertDialog[] dlgRef = new AlertDialog[1];
+
+        if (phrases.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText(R.string.quick_phrases_empty);
+            empty.setPadding(0, Math.round(8 * d), 0, Math.round(8 * d));
+            layout.addView(empty);
+        } else {
+            for (int i = 0; i < phrases.size(); i++) {
+                final int idx = i;
+                final String phrase = phrases.get(i);
+                LinearLayout row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                rowLp.bottomMargin = gap;
+                row.setLayoutParams(rowLp);
+
+                Button sendBtn = new Button(this);
+                sendBtn.setText(phrase);
+                sendBtn.setAllCaps(false);
+                LinearLayout.LayoutParams sendLp = new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                sendBtn.setLayoutParams(sendLp);
+                sendBtn.setOnClickListener(v -> {
+                    if (sendChannelChatMessage(phrase)) {
+                        String msg = getString(R.string.quick_phrases_sent, phrase);
+                        Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show();
+                        if (dlgRef[0] != null) dlgRef[0].dismiss();
+                    } else {
+                        Toast.makeText(MainActivity.this, R.string.text_con_cmderr, Toast.LENGTH_SHORT).show();
+                    }
+                });
+                row.addView(sendBtn);
+
+                Button delBtn = new Button(this);
+                delBtn.setText("✕");
+                delBtn.setContentDescription(getString(R.string.quick_phrases_delete_desc, phrase));
+                LinearLayout.LayoutParams delLp = new LinearLayout.LayoutParams(
+                        Math.round(48 * d), ViewGroup.LayoutParams.WRAP_CONTENT);
+                delLp.leftMargin = Math.round(4 * d);
+                delBtn.setLayoutParams(delLp);
+                delBtn.setOnClickListener(v -> {
+                    AfkAndQuickPhrases.removeQuickPhrase(MainActivity.this, idx);
+                    Toast.makeText(MainActivity.this, R.string.quick_phrases_deleted, Toast.LENGTH_SHORT).show();
+                    if (dlgRef[0] != null) dlgRef[0].dismiss();
+                    showQuickPhrasesDialog();
+                });
+                row.addView(delBtn);
+
+                layout.addView(row);
+            }
+        }
+
+        AlertDialog dlg = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.quick_phrases_title)
+                .setView(scroll)
+                .setNeutralButton(R.string.quick_phrases_add, (d1, w) -> showAddQuickPhraseDialog())
+                .setPositiveButton(android.R.string.ok, null)
+                .create();
+        dlgRef[0] = dlg;
+        dlg.show();
+    }
+
+    private void showAddQuickPhraseDialog() {
+        final EditText input = new EditText(this);
+        input.setHint(R.string.quick_phrases_add_hint);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.quick_phrases_add_title)
+                .setView(ThemeHelper.wrapForDialog(input, this))
+                .setPositiveButton(android.R.string.ok, (d, w) -> {
+                    String text = input.getText() != null ? input.getText().toString().trim() : "";
+                    if (!text.isEmpty()) {
+                        AfkAndQuickPhrases.addQuickPhrase(MainActivity.this, text);
+                        showQuickPhrasesDialog();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    // --- v5.34.0 Feature 4: Connection Radar (Live Connection Quality Monitor) ---
+
+    private void showConnectionRadarDialog() {
+        final TeamTalkService service = getService();
+        final TeamTalkBase client = getClient();
+        if (service == null || client == null) {
+            Toast.makeText(this, R.string.radar_not_connected, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            client.doPing();
+        } catch (Throwable ignored) {}
+
+        float d = getResources().getDisplayMetrics().density;
+        int pad = Math.round(20 * d);
+        int gap = Math.round(6 * d);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(pad, Math.round(12 * d), pad, Math.round(8 * d));
+        scroll.addView(layout);
+
+        final TextView tvServer = new TextView(this);
+        tvServer.setTextSize(15f);
+        tvServer.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvServer.setPadding(0, 0, 0, gap);
+        layout.addView(tvServer);
+
+        final TextView tvUptime = new TextView(this);
+        tvUptime.setPadding(0, 0, 0, gap);
+        layout.addView(tvUptime);
+
+        final TextView tvPing = new TextView(this);
+        tvPing.setPadding(0, 0, 0, gap);
+        layout.addView(tvPing);
+
+        final TextView tvQuality = new TextView(this);
+        tvQuality.setTextSize(15f);
+        tvQuality.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvQuality.setPadding(0, 0, 0, gap);
+        layout.addView(tvQuality);
+
+        final TextView tvCodec = new TextView(this);
+        tvCodec.setPadding(0, 0, 0, gap);
+        layout.addView(tvCodec);
+
+        final TextView tvTraffic = new TextView(this);
+        tvTraffic.setPadding(0, 0, 0, gap);
+        layout.addView(tvTraffic);
+
+        final TextView tvPackets = new TextView(this);
+        tvPackets.setPadding(0, 0, 0, gap);
+        layout.addView(tvPackets);
+
+        final TextView tvSpeakers = new TextView(this);
+        tvSpeakers.setPadding(0, 0, 0, gap);
+        layout.addView(tvSpeakers);
+
+        final String[] lastSpokenSummary = new String[]{""};
+
+        final Runnable populate = () -> {
+            ServerEntry server = service.getServerEntry();
+            String endpoint = server != null ? (server.ipaddr + ":" + server.tcpport) : getString(R.string.radar_not_connected);
+            String tlsStr = getString((server != null && server.encrypted) ? R.string.radar_tls_on : R.string.radar_tls_off);
+            tvServer.setText(getString(R.string.radar_server_label, endpoint, tlsStr));
+
+            tvUptime.setText(getString(R.string.radar_uptime_label, formatRadarDuration(service.getConnectionUptimeSec())));
+
+            ClientStatistics stats = new ClientStatistics();
+            boolean hasStats = client.getClientStatistics(stats);
+            int udpPing = hasStats ? stats.nUdpPingTimeMs : -1;
+            int tcpPing = hasStats ? stats.nTcpPingTimeMs : -1;
+            String udpStr = udpPing >= 0 ? (udpPing + " ms") : getString(R.string.radar_ping_na);
+            String tcpStr = tcpPing >= 0 ? (tcpPing + " ms") : getString(R.string.radar_ping_na);
+            tvPing.setText(getString(R.string.radar_ping_label, udpStr, tcpStr));
+
+            int effectivePing = udpPing >= 0 ? udpPing : tcpPing;
+            String qualityLabel;
+            int qualityColor;
+            if (effectivePing < 0 || effectivePing <= 50) {
+                qualityLabel = getString(R.string.radar_quality_excellent);
+                qualityColor = 0xFF2E7D32;
+            } else if (effectivePing <= 110) {
+                qualityLabel = getString(R.string.radar_quality_good);
+                qualityColor = 0xFF388E3C;
+            } else if (effectivePing <= 220) {
+                qualityLabel = getString(R.string.radar_quality_fair);
+                qualityColor = 0xFFF57C00;
+            } else {
+                qualityLabel = getString(R.string.radar_quality_weak);
+                qualityColor = 0xFFC62828;
+            }
+            tvQuality.setText(getString(R.string.radar_quality_label, qualityLabel));
+            tvQuality.setTextColor(qualityColor);
+
+            Channel chan = null;
+            int myChanId = client.getMyChannelID();
+            if (myChanId > 0) {
+                chan = service.getChannels().get(Integer.valueOf(myChanId));
+            }
+            String codecText = formatChannelCodecInfo(chan);
+            tvCodec.setText(getString(R.string.radar_codec_label, codecText));
+
+            long rxBytes = hasStats ? stats.nUdpBytesRecv : 0L;
+            long txBytes = hasStats ? stats.nUdpBytesSent : 0L;
+            tvTraffic.setText(getString(R.string.radar_traffic_label, formatRadarBytes(rxBytes), formatRadarBytes(txBytes)));
+
+            long rxPkts = 0L;
+            long lostPkts = 0L;
+            int activeSpeakers = 0;
+            int myUid = client.getMyUserID();
+            if (service.isVoiceTransmitting()) {
+                activeSpeakers++;
+            }
+            for (User u : service.getUsers().values()) {
+                if (u == null) continue;
+                if (myChanId > 0 && u.nChannelID == myChanId && u.nUserID != myUid) {
+                    if ((u.uUserState & UserState.USERSTATE_VOICE) != 0) {
+                        activeSpeakers++;
+                    }
+                }
+                if (u.nUserID != myUid) {
+                    UserStatistics us = new UserStatistics();
+                    if (client.getUserStatistics(u.nUserID, us)) {
+                        rxPkts += us.nVoicePacketsRecv;
+                        lostPkts += us.nVoicePacketsLost;
+                    }
+                }
+            }
+            tvPackets.setText(getString(R.string.radar_packets_label, rxPkts, lostPkts));
+            tvSpeakers.setText(getString(R.string.radar_speakers_label, activeSpeakers));
+
+            String bestPingStr = effectivePing >= 0 ? (effectivePing + " ms") : getString(R.string.radar_ping_na);
+            lastSpokenSummary[0] = getString(R.string.radar_spoken_summary, qualityLabel, bestPingStr, codecText, activeSpeakers);
+        };
+
+        populate.run();
+
+        AlertDialog dlg = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.radar_title)
+                .setView(scroll)
+                .setPositiveButton(R.string.radar_btn_refresh, null)
+                .setNeutralButton(R.string.radar_btn_speak, null)
+                .setNegativeButton(android.R.string.ok, null)
+                .create();
+        dlg.setOnShowListener(di -> {
+            Button refreshBtn = dlg.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (refreshBtn != null) {
+                refreshBtn.setOnClickListener(v -> {
+                    try { client.doPing(); } catch (Throwable ignored) {}
+                    populate.run();
+                });
+            }
+            Button speakBtn = dlg.getButton(AlertDialog.BUTTON_NEUTRAL);
+            if (speakBtn != null) {
+                speakBtn.setOnClickListener(v -> {
+                    populate.run();
+                    announceAccessibilityAndTts(lastSpokenSummary[0]);
+                });
+            }
+        });
+        dlg.show();
+    }
+
+    private String formatChannelCodecInfo(Channel chan) {
+        if (chan == null || chan.audiocodec == null) {
+            return getString(R.string.radar_codec_none);
+        }
+        AudioCodec ac = chan.audiocodec;
+        switch (ac.nCodec) {
+            case Codec.OPUS_CODEC: {
+                int srKhz = ac.opus != null && ac.opus.nSampleRate > 0 ? (ac.opus.nSampleRate / 1000) : 48;
+                int kbps = ac.opus != null && ac.opus.nBitRate > 0 ? (ac.opus.nBitRate / 1000) : 64;
+                int ch = ac.opus != null && ac.opus.nChannels >= 2 ? 2 : 1;
+                String chName = getString(ch >= 2 ? R.string.radar_codec_stereo : R.string.radar_codec_mono);
+                return String.format(java.util.Locale.US, "Opus %d kHz • %d kbps • %s", srKhz, kbps, chName);
+            }
+            case Codec.SPEEX_CODEC: {
+                int q = ac.speex != null ? ac.speex.nQuality : 4;
+                return "Speex (Q" + q + ")";
+            }
+            case Codec.SPEEX_VBR_CODEC: {
+                int kbps = ac.speex_vbr != null && ac.speex_vbr.nBitRate > 0 ? (ac.speex_vbr.nBitRate / 1000) : 32;
+                return "Speex VBR • " + kbps + " kbps";
+            }
+            default:
+                return getString(R.string.radar_codec_none);
+        }
+    }
+
+    private static String formatRadarDuration(long seconds) {
+        long h = seconds / 3600L;
+        long m = (seconds % 3600L) / 60L;
+        long s = seconds % 60L;
+        return String.format(java.util.Locale.US, "%02d:%02d:%02d", h, m, s);
+    }
+
+    private static String formatRadarBytes(long bytes) {
+        if (bytes < 1024L) return bytes + " B";
+        if (bytes < 1024L * 1024L) return String.format(java.util.Locale.US, "%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024L * 1024L) return String.format(java.util.Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0));
+        return String.format(java.util.Locale.US, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+    }
+
+    // --- v5.34.0 Feature 5: Channel Games & Randomizer ("Party Tools") ---
+
+    private void showPartyToolsDialog() {
+        final java.security.SecureRandom rng = new java.security.SecureRandom();
+        float d = getResources().getDisplayMetrics().density;
+        int pad = Math.round(20 * d);
+        int gap = Math.round(8 * d);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(pad, Math.round(12 * d), pad, Math.round(8 * d));
+        scroll.addView(layout);
+
+        final TextView resultTv = new TextView(this);
+        resultTv.setText(R.string.party_result_placeholder);
+        resultTv.setTextSize(16f);
+        resultTv.setTypeface(null, android.graphics.Typeface.BOLD);
+        resultTv.setPadding(0, 0, 0, Math.round(12 * d));
+        layout.addView(resultTv);
+
+        final String[] lastResult = new String[]{""};
+        final Button btnSendChat = new Button(this);
+        btnSendChat.setText(R.string.party_btn_send_chat);
+        btnSendChat.setAllCaps(false);
+        btnSendChat.setEnabled(false);
+
+        final java.util.function.Consumer<String> applyResult = res -> {
+            lastResult[0] = res;
+            resultTv.setText(res);
+            btnSendChat.setEnabled(getClient() != null && getClient().getMyChannelID() > 0);
+            announceAccessibilityAndTts(res);
+        };
+
+        // 1. Random Channel Member
+        Button btnPickUser = new Button(this);
+        btnPickUser.setText(R.string.party_btn_random_user);
+        btnPickUser.setAllCaps(false);
+        LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp1.bottomMargin = gap;
+        btnPickUser.setLayoutParams(lp1);
+        btnPickUser.setOnClickListener(v -> {
+            TeamTalkService srv = getService();
+            TeamTalkBase cl = getClient();
+            int myChanId = cl != null ? cl.getMyChannelID() : 0;
+            if (srv == null || myChanId <= 0) {
+                Toast.makeText(MainActivity.this, R.string.party_no_channel_users, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            java.util.List<User> members = new java.util.ArrayList<>();
+            for (User u : srv.getUsers().values()) {
+                if (u != null && u.nChannelID == myChanId) {
+                    members.add(u);
+                }
+            }
+            if (members.isEmpty()) {
+                Toast.makeText(MainActivity.this, R.string.party_no_channel_users, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            User winner = members.get(rng.nextInt(members.size()));
+            String nick = Utils.getDisplayName(MainActivity.this, winner);
+            applyResult.accept(getString(R.string.party_result_user, nick, members.size()));
+        });
+        layout.addView(btnPickUser);
+
+        // 2. Dice 1-6
+        Button btnDice = new Button(this);
+        btnDice.setText(R.string.party_btn_dice);
+        btnDice.setAllCaps(false);
+        LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp2.bottomMargin = gap;
+        btnDice.setLayoutParams(lp2);
+        btnDice.setOnClickListener(v -> {
+            int val = rng.nextInt(6) + 1;
+            applyResult.accept(getString(R.string.party_result_dice, val));
+        });
+        layout.addView(btnDice);
+
+        // 3. Random Number 1-100
+        Button btnNum = new Button(this);
+        btnNum.setText(R.string.party_btn_random_100);
+        btnNum.setAllCaps(false);
+        LinearLayout.LayoutParams lp3 = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp3.bottomMargin = gap;
+        btnNum.setLayoutParams(lp3);
+        btnNum.setOnClickListener(v -> {
+            int val = rng.nextInt(100) + 1;
+            applyResult.accept(getString(R.string.party_result_number, val));
+        });
+        layout.addView(btnNum);
+
+        // 4. Coin Flip
+        Button btnCoin = new Button(this);
+        btnCoin.setText(R.string.party_btn_coin);
+        btnCoin.setAllCaps(false);
+        LinearLayout.LayoutParams lp4 = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp4.bottomMargin = Math.round(12 * d);
+        btnCoin.setLayoutParams(lp4);
+        btnCoin.setOnClickListener(v -> {
+            String side = getString(rng.nextBoolean() ? R.string.party_coin_heads : R.string.party_coin_tails);
+            applyResult.accept(getString(R.string.party_result_coin, side));
+        });
+        layout.addView(btnCoin);
+
+        // 5. Post Result to Channel Chat
+        LinearLayout.LayoutParams lp5 = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnSendChat.setLayoutParams(lp5);
+        btnSendChat.setOnClickListener(v -> {
+            if (!lastResult[0].isEmpty() && sendChannelChatMessage(lastResult[0])) {
+                Toast.makeText(MainActivity.this, R.string.party_sent_to_chat, Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(MainActivity.this, R.string.quick_phrases_need_channel, Toast.LENGTH_SHORT).show();
+            }
+        });
+        layout.addView(btnSendChat);
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.party_tools_title)
+                .setView(scroll)
+                .setPositiveButton(android.R.string.ok, null)
                 .show();
     }
 
@@ -4831,6 +5591,17 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                     noteItem.setTitle(R.string.action_user_note);
                 }
             }
+            MenuItem soloItem = userActions.getMenu().findItem(R.id.action_user_solo);
+            if (soloItem != null) {
+                int myChanId = getClient().getMyChannelID();
+                boolean canSolo = myChanId > 0
+                        && this.selectedUser.nChannelID == myChanId
+                        && this.selectedUser.nUserID != myuserid;
+                soloItem.setVisible(canSolo).setEnabled(canSolo);
+                boolean isSoloTarget = getService() != null
+                        && getService().getSoloUserId() == this.selectedUser.nUserID;
+                soloItem.setTitle(isSoloTarget ? R.string.action_user_solo_off : R.string.action_user_solo_on);
+            }
             userActions.show();
             return true;
         }
@@ -4905,6 +5676,17 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                 String noteKey = UserNotesStore.keyForUser(this.selectedUser);
                 String displayName = Utils.getDisplayName(this, this.selectedUser);
                 showEditUserNoteDialog(noteKey, displayName, null);
+            }
+        } else if (itemId == R.id.action_user_solo) {
+            if (this.selectedUser != null && getService() != null) {
+                String displayName = Utils.getDisplayName(this, this.selectedUser);
+                boolean enabled = getService().toggleSoloUser(this.selectedUser.nUserID);
+                String feedback = enabled
+                        ? getString(R.string.solo_enabled_toast, displayName)
+                        : getString(R.string.solo_disabled_toast);
+                Toast.makeText(this, feedback, Toast.LENGTH_LONG).show();
+                announceAccessibilityAndTts(feedback);
+                invalidateOptionsMenu();
             }
         } else if (itemId == R.id.action_kickchan) {
             alert.setMessage(getString(R.string.kick_confirmation, new Object[]{this.selectedUser.szNickname}));

@@ -13,6 +13,10 @@
         android:title="@string/action_user_note"/>
 
     <item
+        android:id="@+id/action_user_solo"
+        android:title="@string/action_user_solo_on"/>
+
+    <item
         android:id="@+id/action_kickchan"
         android:title="@string/action_kickchan"/>
 

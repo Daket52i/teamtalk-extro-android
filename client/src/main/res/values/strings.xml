@@ -1446,7 +1446,6 @@ By: %3$s"</string>
     <!-- Embedded Android TTMediaBot -->
     <string name="action_embedded_bot">Music Bot (TTMediaBot)</string>
     <string name="action_embedded_bot_running">Music Bot (Running)</string>
-    <string name="pref_summary_embedded_bot">Configure and launch built-in music bot right from your phone</string>
     <string name="title_activity_bot_manager">Music Bot (TTMediaBot)</string>
     <string name="bot_card_status">Bot Status</string>
     <string name="bot_state_stopped">Stopped</string>
@@ -1840,4 +1839,105 @@ By: %3$s"</string>
     <string name="who_is_talking_role_media">media</string>
     <string name="who_is_talking_role_both">voice + media</string>
     <string name="who_is_talking_need_channel">Join a channel first to see active speakers.</string>
+
+    <!-- v5.34.0 TTS to Air (Talking DJ) -->
+    <string name="action_tts_air">🎙️ TTS to Air (Robot DJ)</string>
+    <string name="tts_air_title">🎙️ TTS to Air (Robot Voice in Channel)</string>
+    <string name="tts_air_subtitle">Type any phrase or pick a quick DJ greeting — Android TTS will broadcast it right into the channel!</string>
+    <string name="tts_air_input_hint">Enter phrase to speak into channel…</string>
+    <string name="tts_air_presets_label">Quick DJ phrases:</string>
+    <string name="tts_air_preset_1">Welcome everyone!</string>
+    <string name="tts_air_preset_2">Wishing everyone a great mood!</string>
+    <string name="tts_air_preset_3">Applause!</string>
+    <string name="tts_air_preset_4">Attention, one moment please!</string>
+    <string name="tts_air_preset_5">An awesome track is coming up next!</string>
+    <string name="tts_air_rate_label">Speech rate: %1$sx</string>
+    <string name="tts_air_pitch_label">Voice pitch: %1$sx</string>
+    <string name="tts_air_btn_speak">Speak to Channel</string>
+    <string name="tts_air_btn_stop">Stop</string>
+    <string name="tts_air_synthesizing">Synthesizing speech…</string>
+    <string name="tts_air_broadcasting">🎙️ Broadcasting TTS to channel (%1$s s)</string>
+    <string name="tts_air_error">TTS to Air failed: %1$s</string>
+    <string name="tts_air_empty_text">Please enter text to speak into the channel</string>
+
+    <!-- v5.34.0 Audio Route Switcher & Solo Focus Mode -->
+    <string name="action_audio_route">🔊 Audio Output</string>
+    <string name="audio_route_title">🔊 Audio Output Route</string>
+    <string name="audio_route_speaker">🔊 Loudspeaker</string>
+    <string name="audio_route_earpiece">📞 Earpiece</string>
+    <string name="audio_route_bluetooth">🎧 Bluetooth</string>
+    <string name="audio_route_switched">Audio output switched to: %1$s</string>
+    <string name="action_user_solo_on">🎧 Solo on User (Mute Others)</string>
+    <string name="action_user_solo_off">🎧 Exit Solo Mode</string>
+    <string name="action_solo_clear">🎧 Exit Solo Mode</string>
+    <string name="action_solo_clear_target">🎧 Exit Solo (%1$s)</string>
+    <string name="solo_enabled_toast">🎧 Solo enabled on %1$s — other channel users locally muted</string>
+    <string name="solo_disabled_toast">🎧 Solo disabled — previous mute states restored</string>
+
+    <!-- v5.34.0 Smart AFK Auto-Responder & Quick Phrases -->
+    <string name="action_afk_mode">🤖 AFK Auto-Responder</string>
+    <string name="action_afk_mode_active">🤖 AFK Auto-Responder (ON)</string>
+    <string name="afk_dialog_title">🤖 Smart AFK Auto-Responder</string>
+    <string name="afk_switch_label">Enable AFK mode (Away status + PM auto-reply)</string>
+    <string name="afk_message_label">Auto-reply &amp; Away status message:</string>
+    <string name="afk_message_hint">Away right now, will be back soon! / AFK</string>
+    <string name="afk_missed_counter">Missed PMs while AFK: %1$d</string>
+    <string name="afk_btn_save">Apply</string>
+    <string name="afk_enabled_toast">🤖 AFK mode enabled</string>
+    <string name="afk_disabled_toast">🤖 AFK mode disabled</string>
+    <string name="afk_missed_summary_title">📬 Missed PMs While AFK (%1$d)</string>
+    <string name="action_quick_phrases">💬 Quick Phrases</string>
+    <string name="quick_phrases_title">💬 Quick Chat Phrases</string>
+    <string name="quick_phrases_empty">No quick phrases yet. Tap \"Add\" to create one.</string>
+    <string name="quick_phrases_add">+ Add Phrase</string>
+    <string name="quick_phrases_add_title">New Quick Phrase</string>
+    <string name="quick_phrases_add_hint">Enter phrase for 1-tap channel chat…</string>
+    <string name="quick_phrases_sent">Sent to channel chat: %1$s</string>
+    <string name="quick_phrases_deleted">Phrase removed</string>
+    <string name="quick_phrases_delete_desc">Delete phrase %1$s</string>
+    <string name="quick_phrases_need_channel">Join a channel first to send quick phrases.</string>
+
+    <!-- v5.34.0 Connection Radar -->
+    <string name="action_connection_radar">📡 Connection Radar</string>
+    <string name="radar_title">📡 Connection Radar</string>
+    <string name="radar_server_label">Server: %1$s (%2$s)</string>
+    <string name="radar_tls_on">🔒 TLS</string>
+    <string name="radar_tls_off">⚠️ No TLS</string>
+    <string name="radar_uptime_label">Uptime: %1$s</string>
+    <string name="radar_ping_label">Ping: UDP %1$s • TCP %2$s</string>
+    <string name="radar_ping_na">n/a</string>
+    <string name="radar_quality_label">Quality: %1$s</string>
+    <string name="radar_quality_excellent">Excellent</string>
+    <string name="radar_quality_good">Good</string>
+    <string name="radar_quality_fair">Fair</string>
+    <string name="radar_quality_weak">Weak</string>
+    <string name="radar_codec_label">Channel codec: %1$s</string>
+    <string name="radar_codec_none">Not in a channel</string>
+    <string name="radar_codec_mono">Mono</string>
+    <string name="radar_codec_stereo">Stereo</string>
+    <string name="radar_traffic_label">Traffic: RX %1$s • TX %2$s</string>
+    <string name="radar_packets_label">Voice packets: RX %1$d • Lost %2$d</string>
+    <string name="radar_speakers_label">Active speakers: %1$d</string>
+    <string name="radar_btn_refresh">Refresh</string>
+    <string name="radar_btn_speak">Speak Summary</string>
+    <string name="radar_spoken_summary">Connection %1$s. Ping %2$s. Codec %3$s. Active speakers: %4$d.</string>
+    <string name="radar_not_connected">Not connected to a server</string>
+
+    <!-- v5.34.0 Party Tools & Channel Randomizer -->
+    <string name="action_party_tools">🎲 Channel Games &amp; Randomizer</string>
+    <string name="party_tools_title">🎲 Channel Games &amp; Randomizer</string>
+    <string name="party_btn_random_user">🎰 Pick Random Channel Member</string>
+    <string name="party_btn_dice">🎲 Roll Dice (1–6)</string>
+    <string name="party_btn_random_100">🎯 Random Number (1–100)</string>
+    <string name="party_btn_coin">🪙 Flip a Coin (Heads / Tails)</string>
+    <string name="party_btn_send_chat">📤 Send to Channel Chat</string>
+    <string name="party_result_placeholder">Tap any button above to roll!</string>
+    <string name="party_result_user">🎰 Random member picked: %1$s (out of %2$d)</string>
+    <string name="party_result_dice">🎲 Dice roll (1–6): %1$d</string>
+    <string name="party_result_number">🎯 Random number (1–100): %1$d</string>
+    <string name="party_result_coin">🪙 Coin flip: %1$s</string>
+    <string name="party_coin_heads">Heads</string>
+    <string name="party_coin_tails">Tails</string>
+    <string name="party_no_channel_users">Join a channel first to pick a random member.</string>
+    <string name="party_sent_to_chat">Result posted to channel chat!</string>
 </resources>

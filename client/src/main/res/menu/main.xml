@@ -28,10 +28,17 @@
         android:title="@string/action_who_is_talking"/>
 
     <item
-        android:id="@+id/action_embedded_bot_top"
+        android:id="@+id/action_embedded_bot"
         android:orderInCategory="93"
         app:showAsAction="never"
         android:title="@string/action_embedded_bot"/>
+
+    <item
+        android:id="@+id/action_solo_clear"
+        android:orderInCategory="94"
+        app:showAsAction="never"
+        android:visible="false"
+        android:title="@string/action_solo_clear"/>
 
     <item
         android:id="@+id/action_select_users"
@@ -77,11 +84,20 @@
                 android:id="@+id/action_karaoke"
                 android:title="@string/karaoke_title"/>
             <item
-                android:id="@+id/action_embedded_bot"
-                android:title="@string/action_embedded_bot"/>
-            <item
                 android:id="@+id/action_soundboard"
                 android:title="@string/soundboard_title"/>
+            <item
+                android:id="@+id/action_tts_air"
+                android:title="@string/action_tts_air"/>
+            <item
+                android:id="@+id/action_audio_route"
+                android:title="@string/action_audio_route"/>
+            <item
+                android:id="@+id/action_quick_phrases"
+                android:title="@string/action_quick_phrases"/>
+            <item
+                android:id="@+id/action_party_tools"
+                android:title="@string/action_party_tools"/>
             <item
                 android:id="@+id/action_share_screen"
                 android:title="@string/text_screenshare_start"/>
@@ -142,6 +158,9 @@
                 android:id="@+id/action_chat_history"
                 android:title="@string/action_chat_history"/>
             <item
+                android:id="@+id/action_connection_radar"
+                android:title="@string/action_connection_radar"/>
+            <item
                 android:id="@+id/action_network_monitor"
                 android:title="@string/action_network_monitor"/>
             <item
@@ -171,6 +190,12 @@
         android:orderInCategory="420"
         app:showAsAction="never"
         android:title="@string/action_sleep_timer"/>
+
+    <item
+        android:id="@+id/action_afk_mode"
+        android:orderInCategory="430"
+        app:showAsAction="never"
+        android:title="@string/action_afk_mode"/>
 
     <!-- Plugins -->
     <item

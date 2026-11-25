@@ -161,5 +161,8 @@ public class Preferences {
     public static final String
             PREF_SHIELD_SAFE_LINKS = "extro_shield_safe_links",
             PREF_SHIELD_ANTI_FLOOD_ZALGO = "extro_shield_anti_flood_zalgo",
-            PREF_USER_NOTES_JSON = "extro_user_notes_json";
+            PREF_USER_NOTES_JSON = "extro_user_notes_json",
+            PREF_AFK_ENABLED = "extro_afk_enabled",
+            PREF_AFK_MESSAGE = "extro_afk_message",
+            PREF_QUICK_PHRASES_JSON = "extro_quick_phrases_json";
 }

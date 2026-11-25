@@ -1442,7 +1442,6 @@
     <!-- Embedded Android TTMediaBot -->
     <string name="action_embedded_bot">Музыкальный бот (TTMediaBot)</string>
     <string name="action_embedded_bot_running">Музыкальный бот (в эфире)</string>
-    <string name="pref_summary_embedded_bot">Настроить и запустить встроенного музыкального бота с телефона</string>
     <string name="title_activity_bot_manager">Музыкальный бот (TTMediaBot)</string>
     <string name="bot_card_status">Статус бота</string>
     <string name="bot_state_stopped">Остановлен</string>
@@ -1844,4 +1843,105 @@
     <string name="pref_summary_stream_resolver">Адрес сервера для извлечения потоков YouTube</string>
     <string name="err_stream_resolve_failed">Не удалось извлечь поток YouTube</string>
     <string name="msg_stream_resolved">Поток YouTube получен</string>
+
+    <!-- v5.34.0 TTS в эфир (Говорящий диджей) -->
+    <string name="action_tts_air">🎙️ TTS в эфир (Голос робота)</string>
+    <string name="tts_air_title">🎙️ TTS в эфир (Голос робота в канал)</string>
+    <string name="tts_air_subtitle">Введите фразу или выберите готовую — синтезатор речи Android озвучит её прямо в голосовой канал!</string>
+    <string name="tts_air_input_hint">Введите текст для озвучки в канал…</string>
+    <string name="tts_air_presets_label">Быстрые фразы диджея:</string>
+    <string name="tts_air_preset_1">Добро пожаловать!</string>
+    <string name="tts_air_preset_2">Всем отличного настроения!</string>
+    <string name="tts_air_preset_3">Аплодисменты!</string>
+    <string name="tts_air_preset_4">Внимание, минуточку!</string>
+    <string name="tts_air_preset_5">Сейчас будет крутой трек!</string>
+    <string name="tts_air_rate_label">Скорость речи: %1$sx</string>
+    <string name="tts_air_pitch_label">Тон голоса: %1$sx</string>
+    <string name="tts_air_btn_speak">Сказать в канал</string>
+    <string name="tts_air_btn_stop">Стоп</string>
+    <string name="tts_air_synthesizing">Синтез речи…</string>
+    <string name="tts_air_broadcasting">🎙️ Голос в эфире (%1$s с)</string>
+    <string name="tts_air_error">Ошибка TTS в эфир: %1$s</string>
+    <string name="tts_air_empty_text">Введите текст для озвучки в канал</string>
+
+    <!-- v5.34.0 Аудиовыход и режим «Соло на собеседнике» -->
+    <string name="action_audio_route">🔊 Аудиовыход</string>
+    <string name="audio_route_title">🔊 Переключатель аудиовыхода</string>
+    <string name="audio_route_speaker">🔊 Динамик</string>
+    <string name="audio_route_earpiece">📞 Разговорный динамик</string>
+    <string name="audio_route_bluetooth">🎧 Bluetooth</string>
+    <string name="audio_route_switched">Аудиовыход переключён: %1$s</string>
+    <string name="action_user_solo_on">🎧 Соло на собеседнике</string>
+    <string name="action_user_solo_off">🎧 Снять режим Соло</string>
+    <string name="action_solo_clear">🎧 Снять режим Соло</string>
+    <string name="action_solo_clear_target">🎧 Снять соло (%1$s)</string>
+    <string name="solo_enabled_toast">🎧 Режим Соло: %1$s — остальные участники канала локально приглушены</string>
+    <string name="solo_disabled_toast">🎧 Режим Соло снят — прежние настройки звука восстановлены</string>
+
+    <!-- v5.34.0 Умный автоответчик AFK и Быстрые фразы -->
+    <string name="action_afk_mode">🤖 Автоответчик AFK</string>
+    <string name="action_afk_mode_active">🤖 Автоответчик AFK (ВКЛ)</string>
+    <string name="afk_dialog_title">🤖 Автоответчик «Отошёл (AFK)»</string>
+    <string name="afk_switch_label">Включить режим AFK (статус «Отошёл» + автоответ в ЛС)</string>
+    <string name="afk_message_label">Текст автоответа и статуса:</string>
+    <string name="afk_message_hint">Отошёл, скоро вернусь! / AFK</string>
+    <string name="afk_missed_counter">Пропущено ЛС за время AFK: %1$d</string>
+    <string name="afk_btn_save">Применить</string>
+    <string name="afk_enabled_toast">🤖 Режим AFK включён</string>
+    <string name="afk_disabled_toast">🤖 Режим AFK выключен</string>
+    <string name="afk_missed_summary_title">📬 Пропущенные ЛС во время AFK (%1$d)</string>
+    <string name="action_quick_phrases">💬 Быстрые фразы</string>
+    <string name="quick_phrases_title">💬 Быстрые фразы в чат</string>
+    <string name="quick_phrases_empty">Быстрых фраз пока нет. Нажмите «Добавить», чтобы создать фразу.</string>
+    <string name="quick_phrases_add">+ Добавить фразу</string>
+    <string name="quick_phrases_add_title">Новая быстрая фраза</string>
+    <string name="quick_phrases_add_hint">Введите фразу для отправки в чат в 1 касание…</string>
+    <string name="quick_phrases_sent">Отправлено в чат канала: %1$s</string>
+    <string name="quick_phrases_deleted">Фраза удалена</string>
+    <string name="quick_phrases_delete_desc">Удалить фразу %1$s</string>
+    <string name="quick_phrases_need_channel">Сначала войдите в канал, чтобы отправлять быстрые фразы.</string>
+
+    <!-- v5.34.0 Радар связи -->
+    <string name="action_connection_radar">📡 Радар связи</string>
+    <string name="radar_title">📡 Радар связи</string>
+    <string name="radar_server_label">Сервер: %1$s (%2$s)</string>
+    <string name="radar_tls_on">🔒 TLS</string>
+    <string name="radar_tls_off">⚠️ Без TLS</string>
+    <string name="radar_uptime_label">Время в сети: %1$s</string>
+    <string name="radar_ping_label">Пинг: UDP %1$s • TCP %2$s</string>
+    <string name="radar_ping_na">н/д</string>
+    <string name="radar_quality_label">Качество связи: %1$s</string>
+    <string name="radar_quality_excellent">Отличная</string>
+    <string name="radar_quality_good">Хорошая</string>
+    <string name="radar_quality_fair">Средняя</string>
+    <string name="radar_quality_weak">Слабая</string>
+    <string name="radar_codec_label">Аудиокодек канала: %1$s</string>
+    <string name="radar_codec_none">Не в канале</string>
+    <string name="radar_codec_mono">Моно</string>
+    <string name="radar_codec_stereo">Стерео</string>
+    <string name="radar_traffic_label">Трафик: RX %1$s • TX %2$s</string>
+    <string name="radar_packets_label">Голосовые пакеты: RX %1$d • Потерь %2$d</string>
+    <string name="radar_speakers_label">Активных говорящих: %1$d</string>
+    <string name="radar_btn_refresh">Обновить</string>
+    <string name="radar_btn_speak">Озвучить сводку</string>
+    <string name="radar_spoken_summary">Связь %1$s. Пинг %2$s. Кодек %3$s. Активных говорящих: %4$d.</string>
+    <string name="radar_not_connected">Нет подключения к серверу</string>
+
+    <!-- v5.34.0 Игры и рандомайзер для канала -->
+    <string name="action_party_tools">🎲 Игры и рандомайзер</string>
+    <string name="party_tools_title">🎲 Игры и рандомайзер для канала</string>
+    <string name="party_btn_random_user">🎰 Выбрать случайного участника канала</string>
+    <string name="party_btn_dice">🎲 Бросить кубик (1–6)</string>
+    <string name="party_btn_random_100">🎯 Случайное число (1–100)</string>
+    <string name="party_btn_coin">🪙 Орёл / Решка</string>
+    <string name="party_btn_send_chat">📤 Отправить в чат канала</string>
+    <string name="party_result_placeholder">Нажмите любую кнопку выше!</string>
+    <string name="party_result_user">🎰 Случайный участник: %1$s (из %2$d)</string>
+    <string name="party_result_dice">🎲 Кубик (1–6): %1$d</string>
+    <string name="party_result_number">🎯 Случайное число (1–100): %1$d</string>
+    <string name="party_result_coin">🪙 Монетка: %1$s</string>
+    <string name="party_coin_heads">Орёл</string>
+    <string name="party_coin_tails">Решка</string>
+    <string name="party_no_channel_users">Сначала войдите в канал, чтобы выбрать участника.</string>
+    <string name="party_sent_to_chat">Результат отправлен в чат канала!</string>
 </resources>

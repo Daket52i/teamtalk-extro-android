@@ -1,5 +1,6 @@
 package org.teamtalkextro.backend;
 
+import org.teamtalkextro.data.AfkAndQuickPhrases;
 import org.teamtalkextro.data.AntiSpamStore;
 import org.teamtalkextro.security.ExtroShield;
 
@@ -68,10 +69,13 @@ import dk.bearware.SoundDeviceEffects;
 import dk.bearware.SoundLevel;
 import dk.bearware.TeamTalk5;
 import dk.bearware.TeamTalkBase;
+import dk.bearware.StreamType;
 import dk.bearware.Subscription;
 import dk.bearware.TextMessage;
+import dk.bearware.TextMsgType;
 import dk.bearware.User;
 import dk.bearware.UserAccount;
+import dk.bearware.UserState;
 import org.teamtalkextro.data.MicrophoneInputHelper;
 import org.teamtalkextro.data.ScreenShareAudioHelper;
 import org.teamtalkextro.utils.ScreenShareManager;
@@ -159,6 +163,14 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     private PowerManager.WakeLock mServiceWakeLock;
     private WifiManager.WifiLock mServiceWifiLock;
     private org.teamtalkextro.bot.EmbeddedMediaBot embeddedBot;
+    private TtsAirAnnouncer ttsAirAnnouncer;
+    private volatile long connectedSinceElapsedMs = 0L;
+    private int soloTargetUserId = -1;
+    private final Map<Integer, Boolean> soloSavedMuteStates = new HashMap<>();
+    private final AfkAndQuickPhrases.AfkEngine afkEngine = new AfkAndQuickPhrases.AfkEngine();
+    private int savedAfkStatusMode = 0;
+    private String savedAfkStatusMsg = "";
+    private boolean afkStatusApplied = false;
     Channel mychannel;
     private NotificationManager notificationManager;
     OnVoiceTransmissionToggleListener onVoiceTransmissionToggleListener;
@@ -784,6 +796,13 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
             this.recordingSilenceHandler.removeCallbacksAndMessages(null);
         }
         cancelSleepTimer();
+        clearSoloMode();
+        if (this.ttsAirAnnouncer != null) {
+            try {
+                this.ttsAirAnnouncer.shutdown();
+            } catch (Throwable ignored) {}
+            this.ttsAirAnnouncer = null;
+        }
         stopScreenShare();
         if (this.screenShareManager != null) {
             this.screenShareManager.stopShare();
@@ -1667,6 +1686,11 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     }
 
     private void setMyChannel(Channel chan) {
+        int prevChanId = this.mychannel != null ? this.mychannel.nChannelID : -1;
+        int nextChanId = chan != null ? chan.nChannelID : -1;
+        if (prevChanId != nextChanId) {
+            clearSoloMode();
+        }
         this.mychannel = chan;
         this.talkingPeerUserIds.clear();
         checkAudioDucking();
@@ -2174,29 +2198,313 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         long durMs = sb.trigger(effectId, rate, channels);
 
         if (this.soundboardAutoStartedCapture) {
-            if (this.soundboardCleanupRunnable != null) {
-                this.soundboardHandler.removeCallbacks(this.soundboardCleanupRunnable);
-            }
-            this.soundboardCleanupRunnable = () -> {
-                synchronized (TeamTalkService.this) {
-                    if (!this.soundboardAutoStartedCapture) {
-                        return;
-                    }
-                    ExperimentalAudioCapture c = this.experimentalAudioCapture;
-                    if (c != null && c.isSoundboardActive()) {
-                        this.soundboardHandler.postDelayed(this.soundboardCleanupRunnable, 300L);
-                        return;
-                    }
-                    this.soundboardAutoStartedCapture = false;
-                    if (!this.experimentalVoiceTransmissionRequested && !this.voiceActivationRequested && !isKaraokeActive()) {
-                        stopExperimentalVoiceTransmission(true);
-                        clearExperimentalAudioSessionModeIfIdle();
-                    }
-                }
-            };
-            this.soundboardHandler.postDelayed(this.soundboardCleanupRunnable, Math.max(400L, durMs + 250L));
+            scheduleSoundboardCleanup(durMs);
         }
         return true;
+    }
+
+    private void scheduleSoundboardCleanup(long durMs) {
+        if (this.soundboardCleanupRunnable != null) {
+            this.soundboardHandler.removeCallbacks(this.soundboardCleanupRunnable);
+        }
+        this.soundboardCleanupRunnable = () -> {
+            synchronized (TeamTalkService.this) {
+                if (!this.soundboardAutoStartedCapture) {
+                    return;
+                }
+                ExperimentalAudioCapture c = this.experimentalAudioCapture;
+                if (c != null && c.isSoundboardActive()) {
+                    this.soundboardHandler.postDelayed(this.soundboardCleanupRunnable, 300L);
+                    return;
+                }
+                this.soundboardAutoStartedCapture = false;
+                if (!this.experimentalVoiceTransmissionRequested && !this.voiceActivationRequested && !isKaraokeActive()) {
+                    stopExperimentalVoiceTransmission(true);
+                    clearExperimentalAudioSessionModeIfIdle();
+                }
+            }
+        };
+        this.soundboardHandler.postDelayed(this.soundboardCleanupRunnable, Math.max(400L, durMs + 250L));
+    }
+
+    /**
+     * Streams a synthesized WAV audio file (e.g. from TtsAirAnnouncer) directly into
+     * the outgoing TeamTalk voice stream + local monitor via SoundboardEngine.
+     * Automatically starts ExperimentalAudioCapture if user is in a channel and idle.
+     */
+    public synchronized long playSoundboardAudioFile(File audioFile) {
+        TeamTalkBase client = this.ttclient;
+        if (client == null || client.getMyChannelID() <= 0 || audioFile == null || !audioFile.exists()) {
+            return -1L;
+        }
+        ExperimentalAudioCapture cap = this.experimentalAudioCapture;
+        boolean alreadyRunning = cap != null && cap.isActive();
+        if (!alreadyRunning) {
+            startVoiceCapture(false);
+            cap = this.experimentalAudioCapture;
+            if (cap != null && cap.isActive()) {
+                this.soundboardAutoStartedCapture = true;
+            }
+        }
+        if (cap == null) {
+            return -1L;
+        }
+        int rate = cap.getActiveSampleRate();
+        int channels = cap.getActiveChannels();
+        if (rate <= 0) {
+            rate = getExperimentalPreferredSampleRate();
+        }
+        if (channels <= 0) {
+            channels = 1;
+        }
+        SharedPreferences prefs = getSessionPreferences();
+        boolean monitor = prefs.getBoolean(Preferences.PREF_KARAOKE_MONITOR, true);
+        SoundboardEngine sb = cap.soundboard();
+        sb.setMonitorEnabled(monitor);
+        long durMs = sb.playAudioFile(getApplicationContext(), audioFile, rate, channels);
+        if (durMs <= 0) {
+            if (this.soundboardAutoStartedCapture) {
+                scheduleSoundboardCleanup(200L);
+            }
+            return -1L;
+        }
+        if (this.soundboardAutoStartedCapture) {
+            scheduleSoundboardCleanup(durMs);
+        }
+        return durMs;
+    }
+
+    public synchronized void speakTtsToAir(String text, float rate, float pitch, TtsAirAnnouncer.Callback callback) {
+        if (this.ttclient == null || this.ttclient.getMyChannelID() <= 0) {
+            if (callback != null) {
+                callback.onError(getString(R.string.soundboard_need_channel));
+            }
+            return;
+        }
+        if (this.ttsAirAnnouncer == null) {
+            this.ttsAirAnnouncer = new TtsAirAnnouncer(getApplicationContext(), this);
+        }
+        this.ttsAirAnnouncer.speakToChannel(text, rate, pitch, callback);
+    }
+
+    // --- v5.34.0 Audio Output Route Switcher ---
+
+    public static final int AUDIO_ROUTE_SPEAKER = 0;
+    public static final int AUDIO_ROUTE_EARPIECE = 1;
+    public static final int AUDIO_ROUTE_BLUETOOTH = 2;
+
+    public int getCurrentAudioRoute() {
+        if ((this.bluetoothHeadsetHelper != null && this.bluetoothHeadsetHelper.isOnHeadsetSco())
+                || (this.audioManager != null && this.audioManager.isBluetoothScoOn())) {
+            return AUDIO_ROUTE_BLUETOOTH;
+        }
+        if (this.audioManager != null && this.audioManager.isSpeakerphoneOn()) {
+            return AUDIO_ROUTE_SPEAKER;
+        }
+        return AUDIO_ROUTE_EARPIECE;
+    }
+
+    public boolean isBluetoothRouteAvailable() {
+        if (this.bluetoothHeadsetHelper != null && this.bluetoothHeadsetHelper.isHeadsetConnected()) {
+            return true;
+        }
+        return this.audioManager != null && this.audioManager.isBluetoothScoAvailableOffCall()
+                && this.bluetoothHeadsetHelper != null && this.bluetoothHeadsetHelper.isStarted();
+    }
+
+    public synchronized boolean switchAudioRoute(int route) {
+        if (this.audioManager == null) {
+            this.audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        }
+        if (this.audioManager == null) {
+            return false;
+        }
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+        try {
+            if (route == AUDIO_ROUTE_BLUETOOTH) {
+                this.audioManager.setSpeakerphoneOn(false);
+                if (this.bluetoothHeadsetHelper != null) {
+                    if (!this.bluetoothHeadsetHelper.isStarted()) {
+                        this.bluetoothHeadsetHelper.start();
+                    }
+                    boolean connected = this.bluetoothHeadsetHelper.scoAudioConnect();
+                    if (!connected && this.audioManager.isBluetoothScoAvailableOffCall()) {
+                        this.audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                        this.audioManager.startBluetoothSco();
+                        this.audioManager.setBluetoothScoOn(true);
+                    }
+                } else if (this.audioManager.isBluetoothScoAvailableOffCall()) {
+                    this.audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                    this.audioManager.startBluetoothSco();
+                    this.audioManager.setBluetoothScoOn(true);
+                }
+                prefs.edit().putBoolean(Preferences.PREF_SOUNDSYSTEM_SPEAKERPHONE, false).apply();
+                return true;
+            } else if (route == AUDIO_ROUTE_SPEAKER) {
+                if (this.bluetoothHeadsetHelper != null) {
+                    this.bluetoothHeadsetHelper.scoAudioDisconnect();
+                }
+                this.audioManager.setBluetoothScoOn(false);
+                this.audioManager.setSpeakerphoneOn(true);
+                prefs.edit().putBoolean(Preferences.PREF_SOUNDSYSTEM_SPEAKERPHONE, true).apply();
+                return true;
+            } else {
+                if (this.bluetoothHeadsetHelper != null) {
+                    this.bluetoothHeadsetHelper.scoAudioDisconnect();
+                }
+                this.audioManager.setBluetoothScoOn(false);
+                this.audioManager.setSpeakerphoneOn(false);
+                prefs.edit().putBoolean(Preferences.PREF_SOUNDSYSTEM_SPEAKERPHONE, false).apply();
+                return true;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "switchAudioRoute failed for route=" + route, t);
+            return false;
+        }
+    }
+
+    // --- v5.34.0 Solo Focus Mode ---
+
+    public synchronized int getSoloUserId() {
+        return this.soloTargetUserId;
+    }
+
+    public synchronized boolean isSoloActive() {
+        return this.soloTargetUserId > 0;
+    }
+
+    public synchronized boolean toggleSoloUser(int targetUserId) {
+        TeamTalkBase client = this.ttclient;
+        if (client == null || targetUserId <= 0) {
+            return false;
+        }
+        if (this.soloTargetUserId == targetUserId) {
+            clearSoloMode();
+            return false;
+        }
+        if (this.soloTargetUserId > 0) {
+            clearSoloMode();
+        }
+        int myChanId = client.getMyChannelID();
+        int myUserId = client.getMyUserID();
+        if (myChanId <= 0 || targetUserId == myUserId) {
+            return false;
+        }
+        this.soloSavedMuteStates.clear();
+        for (User u : this.users.values()) {
+            if (u == null || u.nChannelID != myChanId || u.nUserID == myUserId) {
+                continue;
+            }
+            boolean wasMuted = (u.uUserState & UserState.USERSTATE_MUTE_VOICE) != 0;
+            this.soloSavedMuteStates.put(Integer.valueOf(u.nUserID), Boolean.valueOf(wasMuted));
+            boolean muteNow = (u.nUserID != targetUserId);
+            try {
+                client.setUserMute(u.nUserID, StreamType.STREAMTYPE_VOICE, muteNow);
+            } catch (Throwable ignored) {}
+        }
+        if (!this.soloSavedMuteStates.containsKey(Integer.valueOf(targetUserId))) {
+            this.soloSavedMuteStates.put(Integer.valueOf(targetUserId), Boolean.FALSE);
+            try {
+                client.setUserMute(targetUserId, StreamType.STREAMTYPE_VOICE, false);
+            } catch (Throwable ignored) {}
+        }
+        this.soloTargetUserId = targetUserId;
+        return true;
+    }
+
+    public synchronized void clearSoloMode() {
+        if (this.soloTargetUserId <= 0 && this.soloSavedMuteStates.isEmpty()) {
+            return;
+        }
+        TeamTalkBase client = this.ttclient;
+        if (client != null) {
+            for (Map.Entry<Integer, Boolean> entry : this.soloSavedMuteStates.entrySet()) {
+                try {
+                    client.setUserMute(entry.getKey().intValue(), StreamType.STREAMTYPE_VOICE,
+                            Boolean.TRUE.equals(entry.getValue()));
+                } catch (Throwable ignored) {}
+            }
+        }
+        this.soloSavedMuteStates.clear();
+        this.soloTargetUserId = -1;
+    }
+
+    // --- v5.34.0 Smart AFK Auto-Responder ---
+
+    public synchronized boolean isAfkEnabled() {
+        return this.afkEngine.isEnabled();
+    }
+
+    public synchronized int getAfkMissedCount() {
+        return this.afkEngine.getMissedCount();
+    }
+
+    public synchronized List<AfkAndQuickPhrases.MissedPm> getAfkMissedSnapshot() {
+        return this.afkEngine.getMissedPmsSnapshot();
+    }
+
+    public synchronized List<AfkAndQuickPhrases.MissedPm> setAfkEnabled(boolean enabled, String customMessage) {
+        String effectiveMsg = (customMessage != null && !customMessage.trim().isEmpty())
+                ? customMessage.trim()
+                : AfkAndQuickPhrases.getAfkMessage(getApplicationContext());
+        AfkAndQuickPhrases.setAfkMessage(getApplicationContext(), effectiveMsg);
+        AfkAndQuickPhrases.setAfkEnabledPref(getApplicationContext(), enabled);
+        this.afkEngine.setMessage(effectiveMsg);
+
+        if (enabled) {
+            this.afkEngine.setEnabled(true);
+            applyAfkAwayStatus(effectiveMsg);
+            return Collections.emptyList();
+        } else {
+            this.afkEngine.setEnabled(false);
+            List<AfkAndQuickPhrases.MissedPm> missed = this.afkEngine.drainMissedPms();
+            restoreStatusAfterAfk();
+            return missed;
+        }
+    }
+
+    private void applyAfkAwayStatus(String afkMsg) {
+        TeamTalkBase client = this.ttclient;
+        if (client == null) return;
+        try {
+            User myself = this.users != null ? this.users.get(Integer.valueOf(client.getMyUserID())) : null;
+            if (!this.afkStatusApplied) {
+                if (myself != null) {
+                    this.savedAfkStatusMode = myself.nStatusMode;
+                    this.savedAfkStatusMsg = myself.szStatusMsg != null ? myself.szStatusMsg : "";
+                } else {
+                    SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+                    int genderBit = prefs.getBoolean(Preferences.PREF_GENERAL_GENDER, false) ? 256 : 0;
+                    this.savedAfkStatusMode = genderBit;
+                    this.savedAfkStatusMsg = prefs.getString(Preferences.PREF_GENERAL_STATUSMSG, "");
+                }
+                this.afkStatusApplied = true;
+            }
+            int flagsPreserve = (myself != null ? myself.nStatusMode : this.savedAfkStatusMode) & ~3;
+            int awayMode = flagsPreserve | 1; // STATUSMODE_AWAY
+            client.doChangeStatus(awayMode, afkMsg);
+        } catch (Throwable ignored) {}
+    }
+
+    private void restoreStatusAfterAfk() {
+        if (!this.afkStatusApplied) return;
+        this.afkStatusApplied = false;
+        TeamTalkBase client = this.ttclient;
+        if (client != null) {
+            try {
+                int restoreMode = this.savedAfkStatusMode & ~3; // STATUSMODE_AVAILABLE + preserved flags
+                if ((this.savedAfkStatusMode & 3) == 2) {
+                    restoreMode |= 2;
+                }
+                client.doChangeStatus(restoreMode, this.savedAfkStatusMsg != null ? this.savedAfkStatusMsg : "");
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    public long getConnectionUptimeSec() {
+        long start = this.connectedSinceElapsedMs;
+        if (start <= 0L) return 0L;
+        return Math.max(0L, (SystemClock.elapsedRealtime() - start) / 1000L);
     }
 
     public boolean isKaraokeActive() {
@@ -3129,6 +3437,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
 
     @Override
     public void onConnectSuccess() {
+        this.connectedSinceElapsedMs = SystemClock.elapsedRealtime();
         this.isSeamlessReconnecting = false;
         acquireServiceLocks();
         if (this.ttserver == null) {
@@ -3178,6 +3487,8 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
 
     @Override
     public void onConnectionLost() {
+        this.connectedSinceElapsedMs = 0L;
+        clearSoloMode();
         stopScreenShare();
         if (this.manualDisconnect || this.ttserver == null) {
             return;
@@ -3247,7 +3558,17 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         if (prefs.getBoolean(Preferences.PREF_GENERAL_GENDER, false)) {
             statusmode = 0 | 256;
         }
-        this.ttclient.doChangeStatus(statusmode, statusmsg);
+        if (AfkAndQuickPhrases.isAfkEnabledPref(getApplicationContext())) {
+            String afkMsg = AfkAndQuickPhrases.getAfkMessage(getApplicationContext());
+            this.savedAfkStatusMode = statusmode;
+            this.savedAfkStatusMsg = statusmsg != null ? statusmsg : "";
+            this.afkStatusApplied = true;
+            this.afkEngine.setMessage(afkMsg);
+            this.afkEngine.setEnabled(true);
+            this.ttclient.doChangeStatus((statusmode & ~3) | 1, afkMsg);
+        } else {
+            this.ttclient.doChangeStatus(statusmode, statusmsg);
+        }
         updateFloatingWindow();
     }
 
@@ -3314,6 +3635,9 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
 
     @Override
     public void onCmdUserLoggedOut(User user) {
+        if (user != null && user.nUserID == this.soloTargetUserId) {
+            clearSoloMode();
+        }
         this.users.remove(Integer.valueOf(user.nUserID));
         this.talkingPeerUserIds.remove(Integer.valueOf(user.nUserID));
         this.originalMediaFileVolumes.remove(Integer.valueOf(user.nUserID));
@@ -3376,6 +3700,16 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
             String name = Utils.getDisplayName(getBaseContext(), user);
             MyTextMessage msg2 = MyTextMessage.createLogMsg(Integer.MIN_VALUE, name + " " + getResources().getString(R.string.text_cmd_userjoinchan));
             getChatLogTextMsgs().add(msg2);
+            synchronized (this) {
+                if (this.soloTargetUserId > 0 && user.nUserID != this.soloTargetUserId
+                        && this.ttclient != null && user.nUserID != this.ttclient.getMyUserID()) {
+                    boolean wasMuted = (user.uUserState & UserState.USERSTATE_MUTE_VOICE) != 0;
+                    this.soloSavedMuteStates.put(Integer.valueOf(user.nUserID), Boolean.valueOf(wasMuted));
+                    try {
+                        this.ttclient.setUserMute(user.nUserID, StreamType.STREAMTYPE_VOICE, true);
+                    } catch (Throwable ignored) {}
+                }
+            }
         }
         SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
         int mf_volume = pref.getInt(Preferences.PREF_SOUNDSYSTEM_MEDIAFILE_VOLUME, 50);
@@ -3416,6 +3750,8 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         }
         if (user.nUserID == this.ttclient.getMyUserID()) {
             setMyChannel(null);
+        } else if (user.nUserID == this.soloTargetUserId) {
+            clearSoloMode();
         }
         String cacheid = UserCached.getCacheID(user);
         if (!cacheid.isEmpty()) {
@@ -3647,6 +3983,31 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
             case 1:
                 getUserTextMsgs(textmessage.nFromUserID).add(newmsg);
                 recordSessionPrivateMessage(textmessage.nFromUserID, newmsg.szNickName, newmsg.szMessage, false, System.currentTimeMillis());
+                if (this.afkEngine.isEnabled() && this.ttclient != null) {
+                    String autoReplyText = this.afkEngine.onIncomingPrivateMessage(
+                            textmessage.nFromUserID,
+                            this.ttclient.getMyUserID(),
+                            newmsg.szNickName,
+                            textmessage.szMessage,
+                            System.currentTimeMillis());
+                    if (autoReplyText != null) {
+                        TextMessage reply = new TextMessage();
+                        reply.nMsgType = TextMsgType.MSGTYPE_USER;
+                        reply.nToUserID = textmessage.nFromUserID;
+                        reply.szMessage = autoReplyText;
+                        if (this.ttclient.doTextMessage(reply) > 0) {
+                            MyTextMessage sentCopy = new MyTextMessage();
+                            sentCopy.nMsgType = TextMsgType.MSGTYPE_USER;
+                            sentCopy.nFromUserID = this.ttclient.getMyUserID();
+                            sentCopy.nToUserID = textmessage.nFromUserID;
+                            sentCopy.szMessage = autoReplyText;
+                            User me = getUsers().get(Integer.valueOf(this.ttclient.getMyUserID()));
+                            sentCopy.szNickName = me != null ? Utils.getDisplayName(getBaseContext(), me) : "";
+                            getUserTextMsgs(textmessage.nFromUserID).add(sentCopy);
+                            recordSessionPrivateMessage(textmessage.nFromUserID, newmsg.szNickName, autoReplyText, true, System.currentTimeMillis());
+                        }
+                    }
+                }
                 return;
             case 2:
                 getChatLogTextMsgs().add(newmsg);

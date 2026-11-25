@@ -1,10 +1,15 @@
 package org.teamtalkextro.backend;
 
+import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.util.Log;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 
 /**
  * Built-in Soundboard / Jingle Machine that synthesizes 6 crisp studio PCM
@@ -21,6 +26,23 @@ public final class SoundboardEngine {
     public static final int SFX_JINGLE = 3;
     public static final int SFX_DING = 4;
     public static final int SFX_BUZZER = 5;
+
+    private static final int MAX_WAV_FILE_BYTES = 16 * 1024 * 1024; // 16 MB safety guard
+
+    /**
+     * Decoded 16-bit PCM WAV data (pure JVM-testable).
+     */
+    public static final class WavData {
+        public final short[] pcm;
+        public final int sampleRate;
+        public final int channels;
+
+        public WavData(short[] pcm, int sampleRate, int channels) {
+            this.pcm = pcm;
+            this.sampleRate = sampleRate;
+            this.channels = channels;
+        }
+    }
 
     private final Object lock = new Object();
     private short[] currentPcm;
@@ -71,6 +93,213 @@ public final class SoundboardEngine {
             this.active = pcm.length > 0;
         }
         return (mono.length * 1000L) / sr;
+    }
+
+    /**
+     * Decodes a standard 16-bit (or 8-bit) PCM WAV file (such as output from
+     * Android TextToSpeech.synthesizeToFile), resamples it to the target TeamTalk
+     * sampleRate & channel count, and queues it into the soundboard mix buffer.
+     *
+     * @return Duration in ms (> 0) on success, or -1 if decoding failed.
+     */
+    public long playAudioFile(Context context, File file, int sampleRate, int channels) {
+        if (file == null || !file.exists() || !file.isFile()) {
+            return -1L;
+        }
+        byte[] rawBytes;
+        try {
+            rawBytes = readFileBytes(file, MAX_WAV_FILE_BYTES);
+        } catch (IOException e) {
+            Log.w(TAG, "Failed to read audio file: " + file, e);
+            return -1L;
+        }
+        WavData wav = parseWavPcm16(rawBytes);
+        if (wav == null || wav.pcm == null || wav.pcm.length == 0) {
+            Log.w(TAG, "Failed to parse WAV PCM from: " + file);
+            return -1L;
+        }
+        int sr = sampleRate > 0 ? sampleRate : 48000;
+        int ch = channels >= 2 ? 2 : 1;
+        short[] prepared = resampleAndConvertChannels(wav.pcm, wav.sampleRate, wav.channels, sr, ch);
+        if (prepared.length == 0) {
+            return -1L;
+        }
+        synchronized (this.lock) {
+            this.currentPcm = prepared;
+            this.cursor = 0;
+            this.activeSampleRate = sr;
+            this.activeChannels = ch;
+            this.active = true;
+        }
+        long frames = prepared.length / ch;
+        return Math.max(1L, (frames * 1000L) / sr);
+    }
+
+    private static byte[] readFileBytes(File file, int maxBytes) throws IOException {
+        try (FileInputStream fis = new FileInputStream(file);
+             ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            byte[] buf = new byte[8192];
+            int total = 0;
+            int n;
+            while ((n = fis.read(buf)) > 0) {
+                if (total + n > maxBytes) {
+                    throw new IOException("Audio file exceeds max size limit");
+                }
+                bos.write(buf, 0, n);
+                total += n;
+            }
+            return bos.toByteArray();
+        }
+    }
+
+    /**
+     * Parses a standard RIFF/WAVE PCM file (16-bit LE signed or 8-bit unsigned)
+     * into 16-bit signed interleaved PCM samples. Handles arbitrary extra chunks
+     * (JUNK, LIST, fact, etc.) and even-byte RIFF padding.
+     */
+    public static WavData parseWavPcm16(byte[] data) {
+        if (data == null || data.length < 44) {
+            return null;
+        }
+        // Check "RIFF" and "WAVE"
+        if (data[0] != 'R' || data[1] != 'I' || data[2] != 'F' || data[3] != 'F'
+                || data[8] != 'W' || data[9] != 'A' || data[10] != 'V' || data[11] != 'E') {
+            return null;
+        }
+
+        int audioFormat = -1;
+        int channels = 0;
+        int sampleRate = 0;
+        int bitsPerSample = 0;
+        int dataOffset = -1;
+        int dataSize = 0;
+
+        int pos = 12;
+        while (pos + 8 <= data.length) {
+            String chunkId = "" + (char) (data[pos] & 0xFF)
+                    + (char) (data[pos + 1] & 0xFF)
+                    + (char) (data[pos + 2] & 0xFF)
+                    + (char) (data[pos + 3] & 0xFF);
+            long chunkSizeUnsigned = readUInt32LE(data, pos + 4);
+            int chunkDataStart = pos + 8;
+            int avail = data.length - chunkDataStart;
+            int chunkSize = (int) Math.min(chunkSizeUnsigned, avail);
+
+            if ("fmt ".equals(chunkId)) {
+                if (chunkSize < 16) {
+                    return null;
+                }
+                audioFormat = readUInt16LE(data, chunkDataStart);
+                channels = readUInt16LE(data, chunkDataStart + 2);
+                sampleRate = (int) readUInt32LE(data, chunkDataStart + 4);
+                bitsPerSample = readUInt16LE(data, chunkDataStart + 14);
+            } else if ("data".equals(chunkId)) {
+                dataOffset = chunkDataStart;
+                dataSize = chunkSize;
+                break;
+            }
+
+            long nextPos = (long) chunkDataStart + chunkSizeUnsigned;
+            if ((chunkSizeUnsigned & 1L) != 0L) {
+                nextPos += 1L; // RIFF word alignment
+            }
+            if (nextPos <= pos || nextPos > data.length) {
+                break;
+            }
+            pos = (int) nextPos;
+        }
+
+        if (audioFormat != 1 || channels < 1 || channels > 2 || sampleRate < 4000 || sampleRate > 192000
+                || dataOffset < 0 || dataSize <= 0) {
+            return null;
+        }
+
+        if (bitsPerSample == 16) {
+            int sampleCount = dataSize / 2;
+            short[] pcm = new short[sampleCount];
+            for (int i = 0; i < sampleCount; i++) {
+                int idx = dataOffset + i * 2;
+                pcm[i] = (short) ((data[idx] & 0xFF) | ((data[idx + 1] & 0xFF) << 8));
+            }
+            return new WavData(pcm, sampleRate, channels);
+        } else if (bitsPerSample == 8) {
+            short[] pcm = new short[dataSize];
+            for (int i = 0; i < dataSize; i++) {
+                int unsigned8 = data[dataOffset + i] & 0xFF;
+                pcm[i] = (short) ((unsigned8 - 128) << 8);
+            }
+            return new WavData(pcm, sampleRate, channels);
+        }
+        return null;
+    }
+
+    /**
+     * Linearly resamples interleaved 16-bit PCM from (srcRate, srcChannels)
+     * to (dstRate, dstChannels). Handles mono→stereo duplication and stereo→mono downmix.
+     */
+    public static short[] resampleAndConvertChannels(
+            short[] src, int srcRate, int srcChannels, int dstRate, int dstChannels) {
+        if (src == null || src.length == 0 || srcRate <= 0 || dstRate <= 0) {
+            return new short[0];
+        }
+        int sCh = srcChannels >= 2 ? 2 : 1;
+        int dCh = dstChannels >= 2 ? 2 : 1;
+        int srcFrames = src.length / sCh;
+        if (srcFrames <= 0) {
+            return new short[0];
+        }
+
+        int dstFrames = (srcRate == dstRate)
+                ? srcFrames
+                : Math.max(1, (int) Math.round(((double) srcFrames * dstRate) / srcRate));
+
+        short[] out = new short[dstFrames * dCh];
+        double ratio = (double) srcRate / (double) dstRate;
+
+        for (int f = 0; f < dstFrames; f++) {
+            double srcPos = (srcRate == dstRate) ? f : (f * ratio);
+            int i0 = (int) srcPos;
+            if (i0 >= srcFrames) i0 = srcFrames - 1;
+            int i1 = Math.min(i0 + 1, srcFrames - 1);
+            double frac = srcPos - i0;
+
+            if (sCh == 1) {
+                float s0 = src[i0];
+                float s1 = src[i1];
+                short sample = VoiceChanger.clampToShort((float) (s0 + (s1 - s0) * frac));
+                if (dCh == 1) {
+                    out[f] = sample;
+                } else {
+                    out[f * 2] = sample;
+                    out[f * 2 + 1] = sample;
+                }
+            } else {
+                float l0 = src[i0 * 2];
+                float r0 = src[i0 * 2 + 1];
+                float l1 = src[i1 * 2];
+                float r1 = src[i1 * 2 + 1];
+                float l = (float) (l0 + (l1 - l0) * frac);
+                float r = (float) (r0 + (r1 - r0) * frac);
+                if (dCh == 1) {
+                    out[f] = VoiceChanger.clampToShort((l + r) * 0.5f);
+                } else {
+                    out[f * 2] = VoiceChanger.clampToShort(l);
+                    out[f * 2 + 1] = VoiceChanger.clampToShort(r);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static int readUInt16LE(byte[] data, int off) {
+        return (data[off] & 0xFF) | ((data[off + 1] & 0xFF) << 8);
+    }
+
+    private static long readUInt32LE(byte[] data, int off) {
+        return (data[off] & 0xFFL)
+                | ((data[off + 1] & 0xFFL) << 8)
+                | ((data[off + 2] & 0xFFL) << 16)
+                | ((data[off + 3] & 0xFFL) << 24);
     }
 
     public void stop() {
