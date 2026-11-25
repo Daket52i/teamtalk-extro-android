@@ -633,6 +633,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
             android.util.Log.e("TeamTalkService", "Failed to init PluginManager", t);
         }
         this.audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        VoiceChanger.loadFromPreferences(this);
         TeamTalk5.loadLibrary();
         TeamTalk5.setLicenseInformation("", "");
         this.ttclient = new TeamTalk5();
@@ -1954,6 +1955,12 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
     }
 
     private boolean karaokeAutoStartedCapture = false;
+    private boolean karaokeStatusApplied = false;
+    private String savedKaraokeStatusMsg = null;
+    private int savedKaraokeStatusMode = 0;
+    private boolean soundboardAutoStartedCapture = false;
+    private final Handler soundboardHandler = new Handler(Looper.getMainLooper());
+    private Runnable soundboardCleanupRunnable;
 
     /**
      * Starts karaoke: opens the backing track and mixes it into the outgoing
@@ -1983,11 +1990,79 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
             channels = 1;
         }
         SharedPreferences prefs = getSessionPreferences();
-        int savedGain = Math.max(0, Math.min(100, prefs.getInt("karaoke_gain", 75)));
-        cap.karaoke().setGain(savedGain / 100f);
-        cap.karaoke().setMonitorEnabled(prefs.getBoolean("karaoke_monitor", true));
-        cap.karaoke().start(uri, rate, channels);
-        return cap.karaoke().isRunning();
+        int savedGain = Math.max(0, Math.min(100, prefs.getInt(Preferences.PREF_KARAOKE_GAIN, 75)));
+        boolean monitor = prefs.getBoolean(Preferences.PREF_KARAOKE_MONITOR, true);
+        boolean ducking = prefs.getBoolean(Preferences.PREF_KARAOKE_DUCKING, false);
+        int pitch = Math.max(-6, Math.min(6, prefs.getInt(Preferences.PREF_KARAOKE_PITCH, 0)));
+        boolean autoStatus = prefs.getBoolean(Preferences.PREF_KARAOKE_AUTO_STATUS, true);
+
+        KaraokeMixer mixer = cap.karaoke();
+        mixer.setGain(savedGain / 100f);
+        mixer.setMonitorEnabled(monitor);
+        mixer.setDuckingEnabled(ducking);
+        mixer.setPitchSemitones(pitch);
+        mixer.setOnFinishedListener(() -> soundboardHandler.post(this::stopKaraoke));
+        mixer.start(uri, rate, channels);
+        if (mixer.isRunning()) {
+            if (autoStatus) {
+                applyKaraokeAutoStatus(mixer.getTitle());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void applyKaraokeAutoStatus(String trackTitle) {
+        TeamTalkBase client = this.ttclient;
+        if (client == null || this.users == null) {
+            return;
+        }
+        try {
+            User myself = this.users.get(Integer.valueOf(client.getMyUserID()));
+            if (myself == null) {
+                return;
+            }
+            if (!this.karaokeStatusApplied) {
+                this.savedKaraokeStatusMode = myself.nStatusMode;
+                this.savedKaraokeStatusMsg = myself.szStatusMsg != null ? myself.szStatusMsg : "";
+                this.karaokeStatusApplied = true;
+            }
+            String title = !TextUtils.isEmpty(trackTitle) ? trackTitle.trim() : getString(R.string.karaoke_title);
+            if (title.length() > 64) {
+                title = title.substring(0, 64);
+            }
+            client.doChangeStatus(myself.nStatusMode, "\uD83C\uDFA4 " + title);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void restoreKaraokeAutoStatus() {
+        if (!this.karaokeStatusApplied) {
+            return;
+        }
+        this.karaokeStatusApplied = false;
+        TeamTalkBase client = this.ttclient;
+        if (client != null) {
+            try {
+                User myself = this.users != null ? this.users.get(Integer.valueOf(client.getMyUserID())) : null;
+                int mode = myself != null ? myself.nStatusMode : this.savedKaraokeStatusMode;
+                client.doChangeStatus(mode, this.savedKaraokeStatusMsg != null ? this.savedKaraokeStatusMsg : "");
+            } catch (Throwable ignored) {
+            }
+        }
+        this.savedKaraokeStatusMsg = null;
+    }
+
+    public synchronized void updateKaraokeAutoStatus(boolean enabled) {
+        if (!isKaraokeActive()) {
+            return;
+        }
+        if (enabled) {
+            KaraokeMixer mixer = getKaraokeMixer();
+            applyKaraokeAutoStatus(mixer != null ? mixer.getTitle() : "");
+        } else {
+            restoreKaraokeAutoStatus();
+        }
     }
 
     public synchronized void stopKaraoke() {
@@ -1995,13 +2070,72 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         if (cap != null) {
             cap.stopKaraoke();
         }
+        restoreKaraokeAutoStatus();
         if (this.karaokeAutoStartedCapture) {
             this.karaokeAutoStartedCapture = false;
-            if (!this.experimentalVoiceTransmissionRequested && !this.voiceActivationRequested) {
+            if (!this.experimentalVoiceTransmissionRequested && !this.voiceActivationRequested
+                    && (cap == null || !cap.isSoundboardActive())) {
                 stopExperimentalVoiceTransmission(true);
                 clearExperimentalAudioSessionModeIfIdle();
             }
         }
+    }
+
+    public synchronized boolean playSoundboardEffect(int effectId) {
+        TeamTalkBase client = this.ttclient;
+        if (client == null || client.getMyChannelID() <= 0) {
+            return false;
+        }
+        ExperimentalAudioCapture cap = this.experimentalAudioCapture;
+        boolean alreadyRunning = cap != null && cap.isActive();
+        if (!alreadyRunning) {
+            startVoiceCapture(false);
+            cap = this.experimentalAudioCapture;
+            if (cap != null && cap.isActive()) {
+                this.soundboardAutoStartedCapture = true;
+            }
+        }
+        if (cap == null) {
+            return false;
+        }
+        int rate = cap.getActiveSampleRate();
+        int channels = cap.getActiveChannels();
+        if (rate <= 0) {
+            rate = getExperimentalPreferredSampleRate();
+        }
+        if (channels <= 0) {
+            channels = 1;
+        }
+        SharedPreferences prefs = getSessionPreferences();
+        boolean monitor = prefs.getBoolean(Preferences.PREF_KARAOKE_MONITOR, true);
+        SoundboardEngine sb = cap.soundboard();
+        sb.setMonitorEnabled(monitor);
+        long durMs = sb.trigger(effectId, rate, channels);
+
+        if (this.soundboardAutoStartedCapture) {
+            if (this.soundboardCleanupRunnable != null) {
+                this.soundboardHandler.removeCallbacks(this.soundboardCleanupRunnable);
+            }
+            this.soundboardCleanupRunnable = () -> {
+                synchronized (TeamTalkService.this) {
+                    if (!this.soundboardAutoStartedCapture) {
+                        return;
+                    }
+                    ExperimentalAudioCapture c = this.experimentalAudioCapture;
+                    if (c != null && c.isSoundboardActive()) {
+                        this.soundboardHandler.postDelayed(this.soundboardCleanupRunnable, 300L);
+                        return;
+                    }
+                    this.soundboardAutoStartedCapture = false;
+                    if (!this.experimentalVoiceTransmissionRequested && !this.voiceActivationRequested && !isKaraokeActive()) {
+                        stopExperimentalVoiceTransmission(true);
+                        clearExperimentalAudioSessionModeIfIdle();
+                    }
+                }
+            };
+            this.soundboardHandler.postDelayed(this.soundboardCleanupRunnable, Math.max(400L, durMs + 250L));
+        }
+        return true;
     }
 
     public boolean isKaraokeActive() {

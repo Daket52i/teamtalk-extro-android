@@ -16,5 +16,7 @@
     <org.teamtalkextro.gui.MaterialListPreference android:entries="@array/default_file_manager_entries" android:title="@string/pref_title_default_file_manager" android:key="default_file_manager" android:summary="@string/pref_summary_default_file_manager" android:defaultValue="ask" android:entryValues="@array/default_file_manager_values" />
     <org.teamtalkextro.gui.MaterialEditTextPreference android:singleLine="true" android:selectAllOnFocus="true" android:title="@string/pref_title_stream_resolver" android:key="pref_stream_resolver_url" android:defaultValue="http://2.26.96.45:8080/resolve" android:summary="@string/pref_summary_stream_resolver" />
     <org.teamtalkextro.gui.MaterialPreference android:icon="@drawable/ic_pref_battery" android:title="@string/pref_title_battery_optimization" android:key="battery_optimization" android:summary="@string/pref_summary_battery_optimization" />
+    <org.teamtalkextro.gui.MaterialPreference android:title="@string/pref_title_backup_export" android:key="backup_export" android:summary="@string/pref_summary_backup_export" />
+    <org.teamtalkextro.gui.MaterialPreference android:title="@string/pref_title_backup_import" android:key="backup_import" android:summary="@string/pref_summary_backup_import" />
     <org.teamtalkextro.gui.MaterialPreference android:icon="@drawable/ic_pref_update" android:title="@string/pref_check_updates" android:key="check_updates" android:summary="@string/pref_summary_check_updates" />
 </PreferenceScreen>

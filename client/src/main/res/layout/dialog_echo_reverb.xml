@@ -127,5 +127,46 @@
                 android:progress="12" />
         </LinearLayout>
 
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="16dp"
+            android:background="?attr/colorOutlineVariant" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/label_autotune_scale"
+            android:textAppearance="?android:textAppearanceMedium"
+            android:textColor="?attr/colorOnSurface"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <RadioGroup
+            android:id="@+id/rg_autotune_scale"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rb_scale_chromatic"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/autotune_scale_chromatic" />
+
+            <RadioButton
+                android:id="@+id/rb_scale_major_c"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/autotune_scale_major_c" />
+
+            <RadioButton
+                android:id="@+id/rb_scale_minor_a"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/autotune_scale_minor_a" />
+        </RadioGroup>
+
     </LinearLayout>
 </ScrollView>

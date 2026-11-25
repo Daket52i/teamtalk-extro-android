@@ -36,6 +36,11 @@ public final class KaraokeMixer {
     private static final int RING_SECONDS = 2;
     private static final int PREROLL_MS = 150;
     private static final int DECODE_TIMEOUT_US = 10000;
+    private static final int PITCH_BUF_SIZE = 8192;
+
+    public interface OnFinishedListener {
+        void onKaraokeFinished();
+    }
 
     private final Context context;
     private final Object ringLock = new Object();
@@ -49,7 +54,18 @@ public final class KaraokeMixer {
     private volatile int targetChannels = 1;
     private volatile float gain = 0.75f;
     private volatile boolean monitorEnabled = true;
+    private volatile boolean duckingEnabled = false;
+    private volatile int pitchSemitones = 0;
     private volatile String title = "";
+    private volatile OnFinishedListener finishedListener;
+
+    // Dedicated instance-owned pitch-shift buffers (never collide with VoiceChanger)
+    private final short[] pitchBufL = new short[PITCH_BUF_SIZE];
+    private final short[] pitchBufR = new short[PITCH_BUF_SIZE];
+    private int pitchWritePos = 0;
+    private float pitchPhase = 0.0f;
+    private short[] frameScratchL = new short[2048];
+    private short[] frameScratchR = new short[2048];
 
     private short[] ring = new short[0];
     private int ringWrite;
@@ -101,6 +117,10 @@ public final class KaraokeMixer {
         return (float) (Math.pow(g, 1.5) * 0.75);
     }
 
+    public boolean isMonitorEnabled() {
+        return this.monitorEnabled;
+    }
+
     public void setMonitorEnabled(boolean enabled) {
         this.monitorEnabled = enabled;
         if (!enabled) {
@@ -110,8 +130,52 @@ public final class KaraokeMixer {
         }
     }
 
+    public boolean isDuckingEnabled() {
+        return this.duckingEnabled;
+    }
+
+    public void setDuckingEnabled(boolean enabled) {
+        this.duckingEnabled = enabled;
+    }
+
+    public int getPitchSemitones() {
+        return this.pitchSemitones;
+    }
+
+    public void setPitchSemitones(int semitones) {
+        int clamped = Math.max(-6, Math.min(6, semitones));
+        if (this.pitchSemitones != clamped) {
+            this.pitchSemitones = clamped;
+            if (clamped == 0) {
+                resetPitchState();
+            }
+        }
+    }
+
+    public void setOnFinishedListener(OnFinishedListener listener) {
+        this.finishedListener = listener;
+    }
+
+    private void resetPitchState() {
+        java.util.Arrays.fill(this.pitchBufL, (short) 0);
+        java.util.Arrays.fill(this.pitchBufR, (short) 0);
+        this.pitchWritePos = 0;
+        this.pitchPhase = 0.0f;
+    }
+
     public void setPaused(boolean value) {
         this.paused = value;
+        AudioTrack track = this.monitor;
+        if (track != null && track.getState() == AudioTrack.STATE_INITIALIZED) {
+            try {
+                if (value) {
+                    track.pause();
+                } else {
+                    track.play();
+                }
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     public synchronized void start(Uri uri, int sampleRate, int channels) {
@@ -126,6 +190,7 @@ public final class KaraokeMixer {
         this.eos = false;
         this.drainRequested = false;
         this.primed = false;
+        resetPitchState();
         synchronized (this.ringLock) {
             this.ring = new short[Math.max(sampleRate * RING_SECONDS * channels, 4096)];
             this.ringWrite = 0;
@@ -169,13 +234,21 @@ public final class KaraokeMixer {
      * written on underrun, so the capture loop never blocks on the decoder.
      */
     public void read(byte[] dst, int offset, int length) {
+        read(dst, offset, length, 1.0f);
+    }
+
+    /**
+     * Fills {@code dst} with the backing track in the target format, applying
+     * optional real-time key shift and smooth auto-ducking multiplier.
+     */
+    public void read(byte[] dst, int offset, int length, float duckMultiplier) {
         if (dst == null || length <= 0) {
             return;
         }
         for (int i = offset; i < offset + length; i++) {
             dst[i] = 0;
         }
-        if (!this.running) {
+        if (!this.running || this.paused) {
             return;
         }
         int samples = length / 2;
@@ -183,12 +256,18 @@ public final class KaraokeMixer {
             return;
         }
 
+        int channels = Math.max(1, this.targetChannels);
+        int sr = Math.max(8000, this.targetSampleRate);
+        int semi = this.pitchSemitones;
+        float clampedDuck = Math.max(0.15f, Math.min(1.0f, duckMultiplier));
+        float effectiveGain = getEffectiveGain() * clampedDuck;
+
         int got = 0;
         synchronized (this.ringLock) {
             // Do not start the song with a half-empty buffer: the first frames
             // would be silence and the voice would arrive before the track.
             if (!this.primed) {
-                int preroll = Math.min(this.targetSampleRate * PREROLL_MS / 1000 * this.targetChannels,
+                int preroll = Math.min(sr * PREROLL_MS / 1000 * channels,
                         this.ring.length / 2);
                 if (this.paused || (this.ringCount < preroll && !this.drainRequested)) {
                     return;
@@ -200,15 +279,47 @@ public final class KaraokeMixer {
             if (readPos < 0) {
                 readPos += this.ring.length;
             }
-            float effectiveGain = getEffectiveGain();
-            for (int i = 0; i < available; i++) {
-                short s = this.ring[readPos];
-                short out = effectiveGain <= 0f ? 0 : VoiceChanger.clampToShort(s * effectiveGain);
-                dst[offset + i * 2] = (byte) (out & 255);
-                dst[offset + i * 2 + 1] = (byte) ((out >> 8) & 255);
-                readPos++;
-                if (readPos >= this.ring.length) {
-                    readPos = 0;
+
+            if (semi == 0) {
+                for (int i = 0; i < available; i++) {
+                    short s = this.ring[readPos];
+                    short out = effectiveGain <= 0f ? 0 : VoiceChanger.clampToShort(s * effectiveGain);
+                    dst[offset + i * 2] = (byte) (out & 255);
+                    dst[offset + i * 2 + 1] = (byte) ((out >> 8) & 255);
+                    readPos++;
+                    if (readPos >= this.ring.length) {
+                        readPos = 0;
+                    }
+                }
+            } else {
+                int frames = available / channels;
+                if (frames > 0) {
+                    if (this.frameScratchL.length < frames) {
+                        this.frameScratchL = new short[Math.max(frames, this.frameScratchL.length * 2)];
+                        this.frameScratchR = new short[this.frameScratchL.length];
+                    }
+                    for (int f = 0; f < frames; f++) {
+                        this.frameScratchL[f] = this.ring[readPos];
+                        if (++readPos >= this.ring.length) readPos = 0;
+                        if (channels > 1) {
+                            this.frameScratchR[f] = this.ring[readPos];
+                            if (++readPos >= this.ring.length) readPos = 0;
+                        }
+                    }
+                    float factor = (float) Math.pow(2.0, semi / 12.0);
+                    applyPitchShiftInternal(this.frameScratchL, channels > 1 ? this.frameScratchR : null, frames, factor, sr);
+                    for (int f = 0; f < frames; f++) {
+                        short outL = effectiveGain <= 0f ? 0 : VoiceChanger.clampToShort(this.frameScratchL[f] * effectiveGain);
+                        int bIdx = offset + (f * channels * 2);
+                        dst[bIdx] = (byte) (outL & 255);
+                        dst[bIdx + 1] = (byte) ((outL >> 8) & 255);
+                        if (channels > 1) {
+                            short outR = effectiveGain <= 0f ? 0 : VoiceChanger.clampToShort(this.frameScratchR[f] * effectiveGain);
+                            dst[bIdx + 2] = (byte) (outR & 255);
+                            dst[bIdx + 3] = (byte) ((outR >> 8) & 255);
+                        }
+                    }
+                    available = frames * channels;
                 }
             }
             this.ringCount -= available;
@@ -227,6 +338,43 @@ public final class KaraokeMixer {
             } catch (Throwable t) {
                 Log.w(TAG, "monitor write failed", t);
             }
+        }
+    }
+
+    private float readPitchInterp(short[] buf, float pos) {
+        int floor = ((int) Math.floor(pos)) % PITCH_BUF_SIZE;
+        if (floor < 0) floor += PITCH_BUF_SIZE;
+        float frac = pos - (float) Math.floor(pos);
+        return buf[(floor + 1) % PITCH_BUF_SIZE] * frac + buf[floor] * (1.0f - frac);
+    }
+
+    private void applyPitchShiftInternal(short[] sL, short[] sR, int numFrames, float factor, int sampleRate) {
+        float win = Math.min(2048, Math.max(512, (sampleRate * 42) / 1000));
+        float phaseStep = (1.0f - factor) / win;
+        for (int i = 0; i < numFrames; i++) {
+            int wp = this.pitchWritePos;
+            this.pitchBufL[wp] = sL[i];
+            if (sR != null) {
+                this.pitchBufR[wp] = sR[i];
+            }
+            this.pitchPhase += phaseStep;
+            while (this.pitchPhase >= 1.0f) this.pitchPhase -= 1.0f;
+            while (this.pitchPhase < 0.0f) this.pitchPhase += 1.0f;
+            float phase2 = this.pitchPhase + 0.5f;
+            if (phase2 >= 1.0f) phase2 -= 1.0f;
+
+            float pos1 = ((wp - (this.pitchPhase * win)) + PITCH_BUF_SIZE) % PITCH_BUF_SIZE;
+            if (pos1 < 0f) pos1 += PITCH_BUF_SIZE;
+            float pos2 = ((wp - (phase2 * win)) + PITCH_BUF_SIZE) % PITCH_BUF_SIZE;
+            if (pos2 < 0f) pos2 += PITCH_BUF_SIZE;
+
+            float w1 = (1.0f - (float) Math.cos(this.pitchPhase * 6.283185307179586d)) * 0.5f;
+            float w2 = 1.0f - w1;
+            sL[i] = VoiceChanger.clampToShort(readPitchInterp(this.pitchBufL, pos1) * w1 + readPitchInterp(this.pitchBufL, pos2) * w2);
+            if (sR != null) {
+                sR[i] = VoiceChanger.clampToShort(readPitchInterp(this.pitchBufR, pos1) * w1 + readPitchInterp(this.pitchBufR, pos2) * w2);
+            }
+            this.pitchWritePos = (wp + 1) % PITCH_BUF_SIZE;
         }
     }
 
@@ -331,6 +479,13 @@ public final class KaraokeMixer {
         }
         this.eos = true;
         releaseMonitor();
+        OnFinishedListener listener = this.finishedListener;
+        if (listener != null) {
+            try {
+                listener.onKaraokeFinished();
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     private int ringCountLocked() {

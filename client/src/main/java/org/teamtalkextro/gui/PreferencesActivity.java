@@ -65,6 +65,7 @@ import org.teamtalkextro.data.AppInfo;
 import org.teamtalkextro.data.MicrophoneInputHelper;
 import org.teamtalkextro.data.Preferences;
 import org.teamtalkextro.data.ScreenShareAudioHelper;
+import org.teamtalkextro.data.SettingsBackupManager;
 import org.teamtalkextro.data.TTSWrapper;
 import org.teamtalkextro.gui.PreferencesActivity;
 
@@ -388,6 +389,42 @@ public class PreferencesActivity extends PreferenceActivity implements TeamTalkC
                 });
             }
 
+            Preference backupExportPref = findPreference("backup_export");
+            if (backupExportPref != null) {
+                backupExportPref.setOnPreferenceClickListener(pref -> {
+                    Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("application/json");
+                    intent.putExtra(Intent.EXTRA_TITLE, SettingsBackupManager.getDefaultBackupFileName());
+                    try {
+                        startActivityForResult(intent, 4001);
+                    } catch (Throwable t) {
+                        if (getActivity() != null) {
+                            Toast.makeText(getActivity(), getString(R.string.backup_export_failed, t.getMessage()), Toast.LENGTH_LONG).show();
+                        }
+                    }
+                    return true;
+                });
+            }
+
+            Preference backupImportPref = findPreference("backup_import");
+            if (backupImportPref != null) {
+                backupImportPref.setOnPreferenceClickListener(pref -> {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                    intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/plain", "application/octet-stream"});
+                    try {
+                        startActivityForResult(intent, 4002);
+                    } catch (Throwable t) {
+                        if (getActivity() != null) {
+                            Toast.makeText(getActivity(), getString(R.string.backup_import_failed, t.getMessage()), Toast.LENGTH_LONG).show();
+                        }
+                    }
+                    return true;
+                });
+            }
+
             Preference checkUpdatePref = findPreference("check_updates");
             if (checkUpdatePref != null) {
                 checkUpdatePref.setOnPreferenceClickListener(pref -> {
@@ -426,6 +463,40 @@ public class PreferencesActivity extends PreferenceActivity implements TeamTalkC
                     } else {
                         preference.setSummary(R.string.pref_summary_bearwareid);
                     }
+                }
+            }
+
+            @Override
+            public void onActivityResult(int requestCode, int resultCode, Intent data) {
+                super.onActivityResult(requestCode, resultCode, data);
+                final Activity act = getActivity();
+                if (act == null || resultCode != Activity.RESULT_OK || data == null || data.getData() == null) {
+                    return;
+                }
+                final Uri uri = data.getData();
+                if (requestCode == 4001) {
+                    new Thread(() -> {
+                        SettingsBackupManager.ExportResult res = SettingsBackupManager.exportToUri(act, uri);
+                        act.runOnUiThread(() -> {
+                            if (res.success) {
+                                Toast.makeText(act, act.getString(R.string.backup_export_success, res.serverCount, res.prefCount), Toast.LENGTH_LONG).show();
+                            } else {
+                                Toast.makeText(act, act.getString(R.string.backup_export_failed, res.errorMessage), Toast.LENGTH_LONG).show();
+                            }
+                        });
+                    }).start();
+                } else if (requestCode == 4002) {
+                    new Thread(() -> {
+                        SettingsBackupManager.ImportResult res = SettingsBackupManager.importFromUri(act, uri);
+                        act.runOnUiThread(() -> {
+                            if (res.success) {
+                                Toast.makeText(act, act.getString(R.string.backup_import_success,
+                                        res.sourcePlatform, res.serversAdded, res.serversSkipped, res.prefsRestored), Toast.LENGTH_LONG).show();
+                            } else {
+                                Toast.makeText(act, act.getString(R.string.backup_import_failed, res.errorMessage), Toast.LENGTH_LONG).show();
+                            }
+                        });
+                    }).start();
                 }
             }
 

@@ -3,6 +3,13 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
+        android:id="@+id/action_cab_peek"
+        android:icon="@android:drawable/ic_menu_view"
+        android:title="@string/action_peek_server"
+        android:contentDescription="@string/action_peek_server"
+        app:showAsAction="always" />
+
+    <item
         android:id="@+id/action_cab_ping"
         android:icon="@android:drawable/ic_menu_rotate"
         android:title="@string/bulk_servers_ping"

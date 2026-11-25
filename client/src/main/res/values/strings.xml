@@ -1376,9 +1376,24 @@ By: %3$s"</string>
     <string name="voice_effect_chorus">Chorus</string>
     <string name="voice_effect_telephone">Telephone</string>
     <string name="voice_effect_ghost">Ghost</string>
+    <string name="voice_effect_autotune">Auto-Tune (Pop / Chromatic)</string>
+    <string name="voice_effect_autotune_hard">Auto-Tune Hard (T-Pain)</string>
+    <string name="voice_effect_studio">Studio Voice</string>
+    <string name="voice_effect_concert_hall">Concert Hall</string>
+    <string name="voice_effect_demon">Demon / Super-Bass</string>
+    <string name="voice_effect_helium">Helium / Cartoon</string>
+    <string name="voice_effect_female">Female Voice</string>
+    <string name="voice_effect_male">Male Baritone</string>
+    <string name="voice_effect_walkie_talkie">Walkie-Talkie</string>
+    <string name="voice_effect_whisper">Whisper / ASMR</string>
+    <string name="voice_effect_broadcast_dj">Radio DJ / FM Broadcast</string>
+    <string name="voice_preview_start">Listen to myself</string>
+    <string name="voice_preview_stop">Stop preview</string>
+    <string name="voice_preview_started">Voice preview active — speak into your mic</string>
+    <string name="voice_preview_failed">Unable to start mic preview (check mic permission)</string>
 
-    <!-- Echo & Reverb Settings Dialog -->
-    <string name="dialog_echo_reverb_title">Echo &amp; Reverb Parameters</string>
+    <!-- Echo, Reverb & Auto-Tune Settings Dialog -->
+    <string name="dialog_echo_reverb_title">Effect Settings (Echo / Reverb / Auto-Tune)</string>
     <string name="chk_echo_enable">Enable Echo</string>
     <string name="label_echo_level">Echo: %d%%</string>
     <string name="label_echo_level_default">Echo: 35%</string>
@@ -1387,6 +1402,56 @@ By: %3$s"</string>
     <string name="label_reverb_level_default">Reverb: 50%</string>
     <string name="label_reverb_room">Room Size: %d%%</string>
     <string name="label_reverb_room_default">Room Size: 60%</string>
+    <string name="label_autotune_scale">Auto-Tune Scale</string>
+    <string name="autotune_scale_chromatic">Chromatic (All notes)</string>
+    <string name="autotune_scale_major_c">Major (C)</string>
+    <string name="autotune_scale_minor_a">Minor (A)</string>
+
+    <!-- Karaoke Pro & Soundboard -->
+    <string name="karaoke_pause">Pause</string>
+    <string name="karaoke_resume">Resume</string>
+    <string name="karaoke_paused_label">Paused</string>
+    <string name="karaoke_ducking">Auto-ducking (lower track when singing)</string>
+    <string name="karaoke_auto_status">Auto-status (🎤 track title)</string>
+    <string name="karaoke_pitch_label">Key / Pitch shift: %1$s st</string>
+    <string name="karaoke_open_soundboard">Soundboard (Live SFX)</string>
+    <string name="soundboard_title">Soundboard (Live SFX)</string>
+    <string name="soundboard_subtitle">Tap any sound to broadcast it to the channel:</string>
+    <string name="soundboard_need_channel">Join a channel first to play soundboard SFX</string>
+    <string name="sfx_applause">👏 Applause</string>
+    <string name="sfx_drumroll">🥁 Drumroll</string>
+    <string name="sfx_fanfare">🎺 Fanfare</string>
+    <string name="sfx_jingle">📻 On-Air Jingle</string>
+    <string name="sfx_ding">🔔 Bell / Ding</string>
+    <string name="sfx_buzzer">🚨 Buzzer / Horn</string>
+
+    <!-- Server Peek (Who's Online) -->
+    <string name="action_peek_server">Who\'s Online (Peek)</string>
+    <string name="server_peek_title">Who\'s Online</string>
+    <string name="server_peek_loading">Checking who is online on %1$s…</string>
+    <string name="server_peek_summary">Online: %1$d users • Channels: %2$d</string>
+    <string name="server_peek_no_users">No users currently online.</string>
+    <string name="server_peek_channels_list">Channels:</string>
+    <string name="server_peek_empty_channels">Empty channels (%1$d)</string>
+    <string name="server_peek_lobby">Lobby (no channel)</string>
+    <string name="server_peek_connect">Connect</string>
+    <string name="server_peek_refresh">Refresh</string>
+    <string name="server_peek_error_unreachable">Server unreachable or connection refused.</string>
+    <string name="server_peek_error_auth">Login rejected (check username/password).</string>
+    <string name="server_peek_error_timeout">Server did not respond in time.</string>
+    <string name="server_peek_error_generic">Failed to inspect server.</string>
+
+    <!-- Unified Cross-Platform Backup & Restore (JSON) -->
+    <string name="action_backup_export">Export Backup (JSON)</string>
+    <string name="action_backup_import">Import Backup (JSON)</string>
+    <string name="pref_title_backup_export">Export settings &amp; servers (JSON)</string>
+    <string name="pref_summary_backup_export">Save unified Android/Windows backup file</string>
+    <string name="pref_title_backup_import">Import settings &amp; servers (JSON)</string>
+    <string name="pref_summary_backup_import">Restore from an Android or Windows Extro backup</string>
+    <string name="backup_export_success">Backup saved (%1$d servers, %2$d settings)</string>
+    <string name="backup_export_failed">Export failed: %1$s</string>
+    <string name="backup_import_success">Restored from %1$s: +%2$d servers (%3$d existing), %4$d settings</string>
+    <string name="backup_import_failed">Import failed: %1$s</string>
 
     <!-- Microphone & Capture Settings -->
     <string name="pref_title_experimental_capture_mode">Microphone mode</string>

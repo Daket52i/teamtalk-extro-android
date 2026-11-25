@@ -23,15 +23,24 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioRecord;
+import android.media.AudioTrack;
 import android.media.MediaPlayer;
+import android.media.MediaRecorder;
 import android.media.MediaScannerConnection;
 import android.media.SoundPool;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
+import androidx.core.content.ContextCompat;
 import com.google.android.material.materialswitch.MaterialSwitch;
 import org.teamtalkextro.backend.KaraokeMixer;
+import org.teamtalkextro.backend.SoundboardEngine;
 import org.teamtalkextro.backend.VoiceChanger;
 import org.teamtalkextro.data.ScreenShareAudioHelper;
 import org.teamtalkextro.utils.ScreenShareManager;
@@ -75,6 +84,8 @@ import android.widget.ListAdapter;
 import android.widget.ListView;
 import android.widget.PopupMenu;
 import android.widget.ProgressBar;
+import android.widget.RadioGroup;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.SpinnerAdapter;
@@ -526,6 +537,11 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             karaokeItem.setEnabled(isLeaveable).setVisible(true);
         }
 
+        MenuItem soundboardItem = menu.findItem(R.id.action_soundboard);
+        if (soundboardItem != null) {
+            soundboardItem.setEnabled(isLeaveable).setVisible(true);
+        }
+
         MenuItem shareScreenItem = menu.findItem(R.id.action_share_screen);
         if (shareScreenItem != null) {
             boolean sharing = getService() != null && getService().isScreenSharingActive();
@@ -552,6 +568,9 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             return true;
         } else if (itemId == R.id.action_karaoke) {
             handleKaraokeAction();
+            return true;
+        } else if (itemId == R.id.action_soundboard) {
+            showSoundboardDialog();
             return true;
         } else if (itemId == R.id.action_share_screen) {
             handleScreenShareAction();
@@ -1387,8 +1406,8 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
 
     private static final int REQUEST_MEDIA_PROJECTION = 2002;
     private static final int REQUEST_KARAOKE_PICK = 2003;
-    private static final String PREF_KARAOKE_GAIN = "karaoke_gain";
-    private static final String PREF_KARAOKE_MONITOR = "karaoke_monitor";
+    private static final String PREF_KARAOKE_GAIN = Preferences.PREF_KARAOKE_GAIN;
+    private static final String PREF_KARAOKE_MONITOR = Preferences.PREF_KARAOKE_MONITOR;
 
     private void handleKaraokeAction() {
         TeamTalkService service = getService();
@@ -1425,10 +1444,17 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             int savedGain = Math.max(0, Math.min(100, prefs.getInt(PREF_KARAOKE_GAIN, 75)));
             mixer.setGain(savedGain / 100f);
             mixer.setMonitorEnabled(prefs.getBoolean(PREF_KARAOKE_MONITOR, true));
+            mixer.setDuckingEnabled(prefs.getBoolean(Preferences.PREF_KARAOKE_DUCKING, false));
+            mixer.setPitchSemitones(prefs.getInt(Preferences.PREF_KARAOKE_PITCH, 0));
         }
         Toast.makeText(this, R.string.karaoke_started, Toast.LENGTH_SHORT).show();
         invalidateOptionsMenu();
         showKaraokeControlDialog();
+    }
+
+    private String formatSemitones(int st) {
+        if (st > 0) return "+" + st;
+        return String.valueOf(st);
     }
 
     private void showKaraokeControlDialog() {
@@ -1438,19 +1464,39 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             return;
         }
         final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+        float density = getResources().getDisplayMetrics().density;
+        int pad = Math.round(20 * density);
+        int gap = Math.round(10 * density);
 
+        ScrollView scroll = new ScrollView(this);
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        int pad = Math.round(24 * getResources().getDisplayMetrics().density);
-        layout.setPadding(pad, pad / 2, pad, 0);
+        layout.setPadding(pad, pad / 2, pad, pad / 2);
+        scroll.addView(layout);
 
-        TextView title = new TextView(this);
-        String trackTitle = mixer.getTitle();
-        title.setText(TextUtils.isEmpty(trackTitle) ? getString(R.string.karaoke_playing) : trackTitle);
-        title.setPadding(0, 0, 0, pad / 2);
+        final TextView title = new TextView(this);
+        final String trackTitle = mixer.getTitle();
+        final String baseTitle = TextUtils.isEmpty(trackTitle) ? getString(R.string.karaoke_playing) : trackTitle;
+        title.setText(mixer.isPaused() ? baseTitle + " (" + getString(R.string.karaoke_paused_label) + ")" : baseTitle);
+        title.setTextSize(16f);
+        title.setPadding(0, 0, 0, gap);
         layout.addView(title);
 
+        // Big Play / Pause toggle button
+        final Button btnPlayPause = new Button(this);
+        btnPlayPause.setText(mixer.isPaused() ? R.string.karaoke_resume : R.string.karaoke_pause);
+        btnPlayPause.setAllCaps(false);
+        btnPlayPause.setOnClickListener(v -> {
+            boolean nowPaused = !mixer.isPaused();
+            mixer.setPaused(nowPaused);
+            btnPlayPause.setText(nowPaused ? R.string.karaoke_resume : R.string.karaoke_pause);
+            title.setText(nowPaused ? baseTitle + " (" + getString(R.string.karaoke_paused_label) + ")" : baseTitle);
+        });
+        layout.addView(btnPlayPause);
+
+        // Backing track volume (0-100%)
         final TextView gainLabel = new TextView(this);
+        gainLabel.setPadding(0, gap, 0, 0);
         final SeekBar gainBar = new SeekBar(this);
         gainBar.setMax(100);
         int gainValue = Math.max(0, Math.min(100, prefs.getInt(PREF_KARAOKE_GAIN, 75)));
@@ -1459,10 +1505,46 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         layout.addView(gainLabel);
         layout.addView(gainBar);
 
+        // Pitch / Key Shift (-6..+6 semitones)
+        final TextView pitchLabel = new TextView(this);
+        pitchLabel.setPadding(0, gap, 0, 0);
+        final SeekBar pitchBar = new SeekBar(this);
+        pitchBar.setMax(12);
+        int savedPitch = Math.max(-6, Math.min(6, prefs.getInt(Preferences.PREF_KARAOKE_PITCH, 0)));
+        pitchBar.setProgress(savedPitch + 6);
+        pitchLabel.setText(getString(R.string.karaoke_pitch_label, formatSemitones(savedPitch)));
+        layout.addView(pitchLabel);
+        layout.addView(pitchBar);
+
+        // Local monitor switch
         final MaterialSwitch monitorSwitch = new MaterialSwitch(this);
         monitorSwitch.setText(R.string.karaoke_monitor);
         monitorSwitch.setChecked(prefs.getBoolean(PREF_KARAOKE_MONITOR, true));
+        monitorSwitch.setPadding(0, gap, 0, 0);
         layout.addView(monitorSwitch);
+
+        // Auto-ducking switch
+        final MaterialSwitch duckingSwitch = new MaterialSwitch(this);
+        duckingSwitch.setText(R.string.karaoke_ducking);
+        duckingSwitch.setChecked(prefs.getBoolean(Preferences.PREF_KARAOKE_DUCKING, false));
+        layout.addView(duckingSwitch);
+
+        // Auto-status switch
+        final MaterialSwitch autoStatusSwitch = new MaterialSwitch(this);
+        autoStatusSwitch.setText(R.string.karaoke_auto_status);
+        autoStatusSwitch.setChecked(prefs.getBoolean(Preferences.PREF_KARAOKE_AUTO_STATUS, true));
+        layout.addView(autoStatusSwitch);
+
+        // Soundboard shortcut button
+        final Button btnSoundboard = new Button(this);
+        btnSoundboard.setText(R.string.karaoke_open_soundboard);
+        btnSoundboard.setAllCaps(false);
+        LinearLayout.LayoutParams sbLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sbLp.topMargin = gap;
+        btnSoundboard.setLayoutParams(sbLp);
+        btnSoundboard.setOnClickListener(v -> showSoundboardDialog());
+        layout.addView(btnSoundboard);
 
         gainBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -1473,24 +1555,46 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                     prefs.edit().putInt(PREF_KARAOKE_GAIN, progress).apply();
                 }
             }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {
                 prefs.edit().putInt(PREF_KARAOKE_GAIN, seekBar.getProgress()).apply();
             }
         });
+
+        pitchBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int st = progress - 6;
+                pitchLabel.setText(getString(R.string.karaoke_pitch_label, formatSemitones(st)));
+                mixer.setPitchSemitones(st);
+                if (fromUser) {
+                    prefs.edit().putInt(Preferences.PREF_KARAOKE_PITCH, st).apply();
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                prefs.edit().putInt(Preferences.PREF_KARAOKE_PITCH, seekBar.getProgress() - 6).apply();
+            }
+        });
+
         monitorSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
             mixer.setMonitorEnabled(isChecked);
             prefs.edit().putBoolean(PREF_KARAOKE_MONITOR, isChecked).apply();
         });
 
+        duckingSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            mixer.setDuckingEnabled(isChecked);
+            prefs.edit().putBoolean(Preferences.PREF_KARAOKE_DUCKING, isChecked).apply();
+        });
+
+        autoStatusSwitch.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            prefs.edit().putBoolean(Preferences.PREF_KARAOKE_AUTO_STATUS, isChecked).apply();
+            service.updateKaraokeAutoStatus(isChecked);
+        });
+
         new MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.karaoke_title)
-                .setView(layout)
+                .setView(scroll)
                 .setPositiveButton(R.string.karaoke_stop, (dialog, which) -> {
                     service.stopKaraoke();
                     Toast.makeText(MainActivity.this, R.string.karaoke_stopped, Toast.LENGTH_SHORT).show();
@@ -1503,6 +1607,190 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                 })
                 .setNeutralButton(android.R.string.cancel, null)
                 .show();
+    }
+
+    private void showSoundboardDialog() {
+        final TeamTalkService service = getService();
+        final TeamTalkBase client = getClient();
+        if (service == null || client == null || client.getMyChannelID() <= 0) {
+            Toast.makeText(this, R.string.soundboard_need_channel, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        float density = getResources().getDisplayMetrics().density;
+        int pad = Math.round(20 * density);
+        int gap = Math.round(8 * density);
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(pad, pad / 2, pad, pad / 2);
+        scroll.addView(layout);
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText(R.string.soundboard_subtitle);
+        subtitle.setPadding(0, 0, 0, gap);
+        layout.addView(subtitle);
+
+        final int[] sfxIds = {
+                SoundboardEngine.SFX_APPLAUSE,
+                SoundboardEngine.SFX_DRUMROLL,
+                SoundboardEngine.SFX_FANFARE,
+                SoundboardEngine.SFX_JINGLE,
+                SoundboardEngine.SFX_DING,
+                SoundboardEngine.SFX_BUZZER
+        };
+        final int[] sfxLabels = {
+                R.string.sfx_applause,
+                R.string.sfx_drumroll,
+                R.string.sfx_fanfare,
+                R.string.sfx_jingle,
+                R.string.sfx_ding,
+                R.string.sfx_buzzer
+        };
+
+        for (int i = 0; i < sfxIds.length; i++) {
+            final int id = sfxIds[i];
+            Button btn = new Button(this);
+            btn.setText(sfxLabels[i]);
+            btn.setAllCaps(false);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = gap / 2;
+            btn.setLayoutParams(lp);
+            btn.setOnClickListener(v -> {
+                if (!service.playSoundboardEffect(id)) {
+                    Toast.makeText(MainActivity.this, R.string.soundboard_need_channel, Toast.LENGTH_SHORT).show();
+                }
+            });
+            layout.addView(btn);
+        }
+
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.soundboard_title)
+                .setView(scroll)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+    }
+
+    private static final class VoicePreviewLoopback {
+        private volatile boolean running = false;
+        private Thread thread;
+        private AudioRecord record;
+        private AudioTrack track;
+
+        synchronized boolean start() {
+            stop();
+            int[] rates = {48000, 44100, 16000};
+            AudioRecord rec = null;
+            int chosenRate = 48000;
+            int recBufBytes = 0;
+
+            for (int r : rates) {
+                int minRec = AudioRecord.getMinBufferSize(r, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+                if (minRec <= 0) continue;
+                int bufSize = Math.max(minRec * 2, (r / 50) * 4);
+                try {
+                    AudioRecord candidate = new AudioRecord(
+                            MediaRecorder.AudioSource.MIC,
+                            r,
+                            AudioFormat.CHANNEL_IN_MONO,
+                            AudioFormat.ENCODING_PCM_16BIT,
+                            bufSize);
+                    if (candidate.getState() == AudioRecord.STATE_INITIALIZED) {
+                        rec = candidate;
+                        chosenRate = r;
+                        recBufBytes = bufSize;
+                        break;
+                    }
+                    candidate.release();
+                } catch (Throwable ignored) {
+                }
+            }
+            if (rec == null) {
+                return false;
+            }
+
+            int minPlay = AudioTrack.getMinBufferSize(chosenRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            int playBuf = Math.max(minPlay > 0 ? minPlay * 2 : recBufBytes, recBufBytes);
+            AudioTrack trk;
+            try {
+                AudioAttributes attrs = new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build();
+                AudioFormat fmt = new AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(chosenRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build();
+                trk = new AudioTrack(attrs, fmt, playBuf,
+                        AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE);
+                if (trk.getState() != AudioTrack.STATE_INITIALIZED) {
+                    trk.release();
+                    rec.release();
+                    return false;
+                }
+            } catch (Throwable t) {
+                try { rec.release(); } catch (Throwable ignored) {}
+                return false;
+            }
+
+            this.record = rec;
+            this.track = trk;
+            this.running = true;
+            final AudioRecord activeRec = rec;
+            final int sr = chosenRate;
+            final int frameBytes = Math.max(640, (sr / 50) * 2);
+
+            this.thread = new Thread(() -> {
+                byte[] buf = new byte[frameBytes];
+                try {
+                    activeRec.startRecording();
+                    trk.play();
+                    while (running) {
+                        int read = activeRec.read(buf, 0, buf.length);
+                        if (read > 0) {
+                            VoiceChanger.process(buf, 0, read, sr, 1);
+                            trk.write(buf, 0, read);
+                        } else if (read < 0) {
+                            break;
+                        }
+                    }
+                } catch (Throwable ignored) {
+                } finally {
+                    try { activeRec.stop(); } catch (Throwable ignored) {}
+                    try { activeRec.release(); } catch (Throwable ignored) {}
+                    try { trk.pause(); } catch (Throwable ignored) {}
+                    try { trk.flush(); } catch (Throwable ignored) {}
+                    try { trk.release(); } catch (Throwable ignored) {}
+                }
+            }, "Extro-VoicePreview");
+            this.thread.start();
+            return true;
+        }
+
+        synchronized void stop() {
+            this.running = false;
+            AudioRecord r = this.record;
+            AudioTrack t = this.track;
+            Thread th = this.thread;
+            this.record = null;
+            this.track = null;
+            this.thread = null;
+            if (r != null) {
+                try { r.stop(); } catch (Throwable ignored) {}
+            }
+            if (t != null) {
+                try { t.pause(); } catch (Throwable ignored) {}
+            }
+            if (th != null && th != Thread.currentThread()) {
+                try { th.join(350); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+            }
+        }
+
+        boolean isRunning() {
+            return this.running;
+        }
     }
 
     private void handleScreenShareAction() {
@@ -1547,8 +1835,24 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                 getString(R.string.voice_effect_underwater),
                 getString(R.string.voice_effect_chorus),
                 getString(R.string.voice_effect_telephone),
-                getString(R.string.voice_effect_ghost)
+                getString(R.string.voice_effect_ghost),
+                getString(R.string.voice_effect_autotune),
+                getString(R.string.voice_effect_autotune_hard),
+                getString(R.string.voice_effect_studio),
+                getString(R.string.voice_effect_concert_hall),
+                getString(R.string.voice_effect_demon),
+                getString(R.string.voice_effect_helium),
+                getString(R.string.voice_effect_female),
+                getString(R.string.voice_effect_male),
+                getString(R.string.voice_effect_walkie_talkie),
+                getString(R.string.voice_effect_whisper),
+                getString(R.string.voice_effect_broadcast_dj)
         };
+        if (current < 0 || current >= effectNames.length) {
+            current = 0;
+        }
+
+        final VoicePreviewLoopback preview = new VoicePreviewLoopback();
 
         MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this);
         builder.setTitle(R.string.voice_changer_title);
@@ -1561,17 +1865,47 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                     getService().onVoiceChangerModeChanged();
                 }
                 Toast.makeText(MainActivity.this, getString(R.string.voice_changer_active, effectNames[which]), Toast.LENGTH_SHORT).show();
-                dialog.dismiss();
+                // Keep dialog open while live preview is active so the user can audition all 24 effects!
+                if (!preview.isRunning()) {
+                    dialog.dismiss();
+                }
             }
         });
         builder.setPositiveButton(R.string.dialog_echo_reverb_title, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
+                preview.stop();
                 showEchoReverbSettingsDialog();
             }
         });
+        builder.setNeutralButton(R.string.voice_preview_start, null);
         builder.setNegativeButton(android.R.string.cancel, null);
-        builder.show();
+
+        final AlertDialog dialog = builder.create();
+        dialog.setOnDismissListener(d -> preview.stop());
+        dialog.show();
+
+        final Button previewBtn = dialog.getButton(DialogInterface.BUTTON_NEUTRAL);
+        if (previewBtn != null) {
+            previewBtn.setOnClickListener(v -> {
+                if (preview.isRunning()) {
+                    preview.stop();
+                    previewBtn.setText(R.string.voice_preview_start);
+                } else {
+                    if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                            != PackageManager.PERMISSION_GRANTED) {
+                        Toast.makeText(MainActivity.this, R.string.voice_preview_failed, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    if (preview.start()) {
+                        previewBtn.setText(R.string.voice_preview_stop);
+                        Toast.makeText(MainActivity.this, R.string.voice_preview_started, Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(MainActivity.this, R.string.voice_preview_failed, Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
+        }
     }
 
     private void showEchoReverbSettingsDialog() {
@@ -1591,12 +1925,24 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
 
         final TextView tvReverbRoom = view.findViewById(R.id.tv_reverb_room);
         final SeekBar sbReverbRoom = view.findViewById(R.id.sb_reverb_room);
+        final RadioGroup rgScale = view.findViewById(R.id.rg_autotune_scale);
 
         boolean echoOn = prefs.getBoolean(Preferences.PREF_VOICE_ECHO_ENABLED, true);
         int echoVal = prefs.getInt(Preferences.PREF_VOICE_ECHO_LEVEL, 35);
         boolean reverbOn = prefs.getBoolean(Preferences.PREF_VOICE_REVERB_ENABLED, true);
         int reverbVal = prefs.getInt(Preferences.PREF_VOICE_REVERB_LEVEL, 50);
         int roomVal = prefs.getInt(Preferences.PREF_VOICE_REVERB_ROOM_SIZE, 60);
+        int scaleVal = prefs.getInt(Preferences.PREF_VOICE_AUTOTUNE_SCALE, VoiceChanger.SCALE_CHROMATIC);
+
+        if (rgScale != null) {
+            if (scaleVal == VoiceChanger.SCALE_MAJOR_C) {
+                rgScale.check(R.id.rb_scale_major_c);
+            } else if (scaleVal == VoiceChanger.SCALE_MINOR_A) {
+                rgScale.check(R.id.rb_scale_minor_a);
+            } else {
+                rgScale.check(R.id.rb_scale_chromatic);
+            }
+        }
 
         if (containerEcho != null) {
             containerEcho.setVisibility(echoOn ? View.VISIBLE : View.GONE);
@@ -1663,6 +2009,15 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                         boolean newReverb = chkReverb.isChecked();
                         int newReverbLvl = sbReverbLevel.getProgress() * 5;
                         int newRoomSize = sbReverbRoom.getProgress() * 5;
+                        int newScale = VoiceChanger.SCALE_CHROMATIC;
+                        if (rgScale != null) {
+                            int checkedId = rgScale.getCheckedRadioButtonId();
+                            if (checkedId == R.id.rb_scale_major_c) {
+                                newScale = VoiceChanger.SCALE_MAJOR_C;
+                            } else if (checkedId == R.id.rb_scale_minor_a) {
+                                newScale = VoiceChanger.SCALE_MINOR_A;
+                            }
+                        }
 
                         prefs.edit()
                                 .putBoolean(Preferences.PREF_VOICE_ECHO_ENABLED, newEcho)
@@ -1670,9 +2025,11 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                                 .putBoolean(Preferences.PREF_VOICE_REVERB_ENABLED, newReverb)
                                 .putInt(Preferences.PREF_VOICE_REVERB_LEVEL, newReverbLvl)
                                 .putInt(Preferences.PREF_VOICE_REVERB_ROOM_SIZE, newRoomSize)
+                                .putInt(Preferences.PREF_VOICE_AUTOTUNE_SCALE, newScale)
                                 .apply();
 
                         VoiceChanger.setEchoReverbConfig(newEcho, newEchoLvl, newReverb, newReverbLvl, newRoomSize);
+                        VoiceChanger.setAutotuneScale(newScale);
                         if (getService() != null) {
                             getService().onVoiceChangerModeChanged();
                         }

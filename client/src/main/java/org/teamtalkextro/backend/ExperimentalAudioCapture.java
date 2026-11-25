@@ -51,6 +51,8 @@ public final class ExperimentalAudioCapture {
     private final Object lock = new Object();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private KaraokeMixer karaokeMixer;
+    private SoundboardEngine soundboardEngine;
+    private float karaokeDuckGain = 1.0f;
 
     private TeamTalkService service;
     private AudioRecord audioRecord;
@@ -334,6 +336,26 @@ public final class ExperimentalAudioCapture {
         if (mixer != null) {
             mixer.stop();
         }
+        this.karaokeDuckGain = 1.0f;
+    }
+
+    public synchronized SoundboardEngine soundboard() {
+        if (this.soundboardEngine == null) {
+            this.soundboardEngine = new SoundboardEngine();
+        }
+        return this.soundboardEngine;
+    }
+
+    public boolean isSoundboardActive() {
+        SoundboardEngine sb = this.soundboardEngine;
+        return sb != null && sb.isActive();
+    }
+
+    public void stopSoundboard() {
+        SoundboardEngine sb = this.soundboardEngine;
+        if (sb != null) {
+            sb.stop();
+        }
     }
 
     public void setScreenShareAudioMode(int mode) {
@@ -469,6 +491,7 @@ public final class ExperimentalAudioCapture {
 
     public void shutdown() {
         stopKaraoke();
+        stopSoundboard();
         stop(true);
     }
 
@@ -597,19 +620,44 @@ public final class ExperimentalAudioCapture {
     /**
      * Sums the backing track into the outgoing buffer. Runs after the voice
      * effects so the minus is not pitch-shifted or equalized with the voice.
+     * Supports smooth Auto-Ducking when the singer speaks/sings.
      */
     private void mixKaraoke(byte[] micBuf, byte[] karaokeBuf, int length) {
         KaraokeMixer mixer = this.karaokeMixer;
         if (mixer == null || !mixer.isActive() || mixer.isPaused()) {
+            this.karaokeDuckGain = 1.0f;
             return;
         }
-        mixer.read(karaokeBuf, 0, length);
+        float duck = 1.0f;
+        if (mixer.isDuckingEnabled()) {
+            int numSamples = length / 2;
+            long sumSq = 0;
+            for (int i = 0; i + 1 < length; i += 2) {
+                short s = (short) ((micBuf[i] & 255) | ((micBuf[i + 1] & 255) << 8));
+                sumSq += (long) s * s;
+            }
+            double rms = numSamples > 0 ? Math.sqrt((double) sumSq / numSamples) : 0.0;
+            float targetDuck = rms > 750.0 ? 0.48f : 1.0f;
+            float alpha = targetDuck < this.karaokeDuckGain ? 0.28f : 0.07f;
+            this.karaokeDuckGain += (targetDuck - this.karaokeDuckGain) * alpha;
+            duck = this.karaokeDuckGain;
+        } else {
+            this.karaokeDuckGain = 1.0f;
+        }
+        mixer.read(karaokeBuf, 0, length, duck);
         for (int i = 0; i + 1 < length; i += 2) {
             short mic = (short) ((micBuf[i] & 255) | ((micBuf[i + 1] & 255) << 8));
             short minus = (short) ((karaokeBuf[i] & 255) | ((karaokeBuf[i + 1] & 255) << 8));
             short result = VoiceChanger.clampToShort((float) mic + (float) minus);
             micBuf[i] = (byte) (result & 255);
             micBuf[i + 1] = (byte) ((result >> 8) & 255);
+        }
+    }
+
+    private void mixSoundboard(byte[] micBuf, int length) {
+        SoundboardEngine sb = this.soundboardEngine;
+        if (sb != null && sb.isActive()) {
+            sb.mixInto(micBuf, 0, length);
         }
     }
 
@@ -693,8 +741,9 @@ public final class ExperimentalAudioCapture {
             int screenMode = getEffectiveScreenShareAudioMode(session);
             boolean isStreamingOrSharing = (this.service != null && (this.service.isScreenSharingActive() || this.service.isStreamingMedia()));
             boolean karaokeActive = isKaraokeActive();
+            boolean soundboardActive = isSoundboardActive();
 
-            if (session.voxEnabled && screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY && !isStreamingOrSharing && !karaokeActive) {
+            if (session.voxEnabled && screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY && !isStreamingOrSharing && !karaokeActive && !soundboardActive) {
                 int energy = computeEnergyLevel(micBuffer, frameBytes);
                 if (energy >= session.voxLevel) {
                     if (!transmitting) {
@@ -763,6 +812,7 @@ public final class ExperimentalAudioCapture {
                 }
                 mixInternalAudio(session, micBuffer, internalBuffer, frameBytes, internalGain, screenMode);
                 mixKaraoke(micBuffer, karaokeBuffer, frameBytes);
+                mixSoundboard(micBuffer, frameBytes);
 
                 block.nStreamID = session.streamId;
                 block.uStreamTypes = 1;

@@ -1372,9 +1372,24 @@
     <string name="voice_effect_chorus">Хор</string>
     <string name="voice_effect_telephone">Телефон</string>
     <string name="voice_effect_ghost">Призрак</string>
+    <string name="voice_effect_autotune">Автотюн (Pop / Хроматический)</string>
+    <string name="voice_effect_autotune_hard">Автотюн Hard (T-Pain)</string>
+    <string name="voice_effect_studio">Студийный вокал</string>
+    <string name="voice_effect_concert_hall">Концертный зал</string>
+    <string name="voice_effect_demon">Демон / Супер-бас</string>
+    <string name="voice_effect_helium">Гелий / Мульт</string>
+    <string name="voice_effect_female">Женский голос</string>
+    <string name="voice_effect_male">Мужской баритон</string>
+    <string name="voice_effect_walkie_talkie">Рация / Walkie-Talkie</string>
+    <string name="voice_effect_whisper">Шёпот / ASMR</string>
+    <string name="voice_effect_broadcast_dj">Радио-диджей / FM Эфир</string>
+    <string name="voice_preview_start">Прослушать себя</string>
+    <string name="voice_preview_stop">Стоп прослушивание</string>
+    <string name="voice_preview_started">Прослушивание включено — говорите в микрофон</string>
+    <string name="voice_preview_failed">Не удалось запустить прослушивание (проверьте разрешение на микрофон)</string>
 
-    <!-- Echo & Reverb Settings Dialog -->
-    <string name="dialog_echo_reverb_title">Параметры эха и реверберации</string>
+    <!-- Echo, Reverb & Auto-Tune Settings Dialog -->
+    <string name="dialog_echo_reverb_title">Настройки эффектов (Эхо / Реверб / Автотюн)</string>
     <string name="chk_echo_enable">Включить эхо</string>
     <string name="label_echo_level">Эхо: %d%%</string>
     <string name="label_echo_level_default">Эхо: 35%</string>
@@ -1383,6 +1398,56 @@
     <string name="label_reverb_level_default">Реверберация: 50%</string>
     <string name="label_reverb_room">Размер помещения: %d%%</string>
     <string name="label_reverb_room_default">Размер помещения: 60%</string>
+    <string name="label_autotune_scale">Тональность автотюна</string>
+    <string name="autotune_scale_chromatic">Хроматическая (все ноты)</string>
+    <string name="autotune_scale_major_c">Мажор (До / C)</string>
+    <string name="autotune_scale_minor_a">Минор (Ля / Am)</string>
+
+    <!-- Karaoke Pro & Soundboard -->
+    <string name="karaoke_pause">Пауза</string>
+    <string name="karaoke_resume">Продолжить</string>
+    <string name="karaoke_paused_label">На паузе</string>
+    <string name="karaoke_ducking">Автоприглушение минуса при пении</string>
+    <string name="karaoke_auto_status">Автостатус (🎤 название трека)</string>
+    <string name="karaoke_pitch_label">Тональность: %1$s пт</string>
+    <string name="karaoke_open_soundboard">Саундпад (Звуки в эфир)</string>
+    <string name="soundboard_title">Саундпад (Звуки в эфир)</string>
+    <string name="soundboard_subtitle">Нажмите на звук, чтобы пустить его в канал:</string>
+    <string name="soundboard_need_channel">Сначала войдите в канал, чтобы использовать саундпад</string>
+    <string name="sfx_applause">👏 Аплодисменты</string>
+    <string name="sfx_drumroll">🥁 Барабанная дробь</string>
+    <string name="sfx_fanfare">🎺 Фанфары</string>
+    <string name="sfx_jingle">📻 Джингл / Эфир</string>
+    <string name="sfx_ding">🔔 Звонок / Дзинь</string>
+    <string name="sfx_buzzer">🚨 Сигнал / Баззер</string>
+
+    <!-- Server Peek (Who's Online) -->
+    <string name="action_peek_server">Кто на сервере</string>
+    <string name="server_peek_title">Кто на сервере</string>
+    <string name="server_peek_loading">Проверяем онлайн на %1$s…</string>
+    <string name="server_peek_summary">Онлайн: %1$d чел. • Каналов: %2$d</string>
+    <string name="server_peek_no_users">Сейчас на сервере никого нет.</string>
+    <string name="server_peek_channels_list">Каналы:</string>
+    <string name="server_peek_empty_channels">Пустые каналы (%1$d)</string>
+    <string name="server_peek_lobby">Лобби (вне каналов)</string>
+    <string name="server_peek_connect">Подключиться</string>
+    <string name="server_peek_refresh">Обновить</string>
+    <string name="server_peek_error_unreachable">Сервер недоступен или отклонил подключение.</string>
+    <string name="server_peek_error_auth">Ошибка входа (проверьте логин/пароль).</string>
+    <string name="server_peek_error_timeout">Сервер не ответил вовремя.</string>
+    <string name="server_peek_error_generic">Не удалось получить список участников.</string>
+
+    <!-- Unified Cross-Platform Backup & Restore (JSON) -->
+    <string name="action_backup_export">Резервная копия (JSON)</string>
+    <string name="action_backup_import">Восстановить из копии (JSON)</string>
+    <string name="pref_title_backup_export">Экспорт настроек и серверов (JSON)</string>
+    <string name="pref_summary_backup_export">Сохранить единую копию для Android и Windows</string>
+    <string name="pref_title_backup_import">Импорт настроек и серверов (JSON)</string>
+    <string name="pref_summary_backup_import">Восстановить из резервной копии Android или Windows</string>
+    <string name="backup_export_success">Копия сохранена (серверов: %1$d, настроек: %2$d)</string>
+    <string name="backup_export_failed">Ошибка экспорта: %1$s</string>
+    <string name="backup_import_success">Восстановлено (%1$s): +%2$d серверов (пропущено %3$d), настроек: %4$d</string>
+    <string name="backup_import_failed">Ошибка импорта: %1$s</string>
 
     <!-- Microphone & Capture Settings -->
     <string name="pref_title_experimental_capture_mode">Режим захвата микрофона</string>

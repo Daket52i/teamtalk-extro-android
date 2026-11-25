@@ -106,6 +106,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import dk.bearware.Constants;
 import dk.bearware.TeamTalkBase;
 import dk.bearware.UserAccount;
+import org.teamtalkextro.backend.ServerPeekHelper;
 import org.teamtalkextro.backend.TeamTalkConnection;
 import org.teamtalkextro.backend.TeamTalkConnectionListener;
 import org.teamtalkextro.backend.TeamTalkService;
@@ -113,6 +114,7 @@ import org.teamtalkextro.data.AppInfo;
 import org.teamtalkextro.data.Permissions;
 import org.teamtalkextro.data.Preferences;
 import org.teamtalkextro.data.ServerEntry;
+import org.teamtalkextro.data.SettingsBackupManager;
 import dk.bearware.events.ClientEventListener;
 
 public class ServerListActivity extends AppCompatActivity
@@ -144,6 +146,8 @@ public class ServerListActivity extends AppCompatActivity
     private static final int REQUEST_NEWSERVER = 2;
     private static final int REQUEST_IMPORT_SERVERLIST = 3;
     private static final int REQUEST_JOINCODE = 4;
+    private static final int REQUEST_BACKUP_EXPORT = 6;
+    private static final int REQUEST_BACKUP_IMPORT = 7;
     private static final String POSITION_NAME = "pos";
 
     private String appliedTheme;
@@ -170,6 +174,10 @@ public class ServerListActivity extends AppCompatActivity
         public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
             if (adapter != null && menu != null) {
                 int count = adapter.getSelectedCount();
+                MenuItem peekItem = menu.findItem(R.id.action_cab_peek);
+                if (peekItem != null) {
+                    peekItem.setVisible(count == 1);
+                }
                 MenuItem editItem = menu.findItem(R.id.action_cab_edit);
                 if (editItem != null) {
                     editItem.setVisible(count == 1);
@@ -191,7 +199,14 @@ public class ServerListActivity extends AppCompatActivity
             int itemId = item.getItemId();
             List<ServerEntry> selected = adapter.getSelectedServers();
 
-            if (itemId == R.id.action_cab_ping) {
+            if (itemId == R.id.action_cab_peek) {
+                if (selected.size() == 1) {
+                    ServerEntry entry = selected.get(0);
+                    mode.finish();
+                    showServerPeekDialog(entry);
+                }
+                return true;
+            } else if (itemId == R.id.action_cab_ping) {
                 if (selected.isEmpty()) {
                     Toast.makeText(ServerListActivity.this, R.string.bulk_servers_none_selected, Toast.LENGTH_SHORT).show();
                 } else {
@@ -583,6 +598,56 @@ public class ServerListActivity extends AppCompatActivity
             case REQUEST_JOINCODE:
                 enterJoinCode();
                 break;
+            case REQUEST_BACKUP_EXPORT:
+                if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                    final Uri uri = data.getData();
+                    if (executorService != null) {
+                        executorService.execute(() -> {
+                            SettingsBackupManager.ExportResult res = SettingsBackupManager.exportToUri(ServerListActivity.this, uri);
+                            runOnUiThread(() -> {
+                                if (res.success) {
+                                    Toast.makeText(ServerListActivity.this,
+                                            getString(R.string.backup_export_success, res.serverCount, res.prefCount),
+                                            Toast.LENGTH_LONG).show();
+                                } else {
+                                    Toast.makeText(ServerListActivity.this,
+                                            getString(R.string.backup_export_failed, res.errorMessage),
+                                            Toast.LENGTH_LONG).show();
+                                }
+                            });
+                        });
+                    }
+                }
+                break;
+            case REQUEST_BACKUP_IMPORT:
+                if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                    final Uri uri = data.getData();
+                    if (executorService != null) {
+                        executorService.execute(() -> {
+                            SettingsBackupManager.ImportResult res = SettingsBackupManager.importFromUri(ServerListActivity.this, uri);
+                            runOnUiThread(() -> {
+                                if (res.success) {
+                                    synchronized (servers) {
+                                        servers.clear();
+                                        loadLocalServers();
+                                    }
+                                    if (adapter != null) {
+                                        adapter.updateServers();
+                                    }
+                                    Toast.makeText(ServerListActivity.this,
+                                            getString(R.string.backup_import_success, res.sourcePlatform,
+                                                    res.serversAdded, res.serversSkipped, res.prefsRestored),
+                                            Toast.LENGTH_LONG).show();
+                                } else {
+                                    Toast.makeText(ServerListActivity.this,
+                                            getString(R.string.backup_import_failed, res.errorMessage),
+                                            Toast.LENGTH_LONG).show();
+                                }
+                            });
+                        });
+                    }
+                }
+                break;
         }
     }
 
@@ -609,6 +674,10 @@ public class ServerListActivity extends AppCompatActivity
             if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) || Permissions.WRITE_EXTERNAL_STORAGE.request(this)) {
                 exportServers();
             }
+        } else if (itemId == R.id.action_backup_export) {
+            launchBackupExport();
+        } else if (itemId == R.id.action_backup_import) {
+            launchBackupImport();
         } else if (itemId == R.id.action_enter_joincode) {
             enterJoinCode();
         } else if (itemId == R.id.action_settings) {
@@ -685,12 +754,95 @@ public class ServerListActivity extends AppCompatActivity
         });
     }
 
+    private void launchBackupExport() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, SettingsBackupManager.getDefaultBackupFileName());
+        try {
+            startActivityForResult(intent, REQUEST_BACKUP_EXPORT);
+        } catch (Throwable t) {
+            Toast.makeText(this, getString(R.string.backup_export_failed, t.getMessage()), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void launchBackupImport() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/plain", "application/octet-stream"});
+        try {
+            startActivityForResult(intent, REQUEST_BACKUP_IMPORT);
+        } catch (Throwable t) {
+            Toast.makeText(this, getString(R.string.backup_import_failed, t.getMessage()), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void showServerPeekDialog(final ServerEntry entry) {
+        if (entry == null) return;
+        View progressView = LayoutInflater.from(this).inflate(R.layout.dialog_progress_m3, null);
+        TextView msgView = progressView.findViewById(R.id.progress_message);
+        String label = !TextUtils.isEmpty(entry.servername) ? entry.servername : entry.ipaddr;
+        if (msgView != null) {
+            msgView.setText(getString(R.string.server_peek_loading, label));
+        }
+
+        final ServerPeekHelper.PeekHandle[] handleRef = new ServerPeekHelper.PeekHandle[1];
+        final AlertDialog progressDialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.server_peek_title)
+                .setView(progressView)
+                .setCancelable(true)
+                .setNegativeButton(android.R.string.cancel, (d, w) -> {
+                    if (handleRef[0] != null) handleRef[0].cancel();
+                })
+                .setOnCancelListener(d -> {
+                    if (handleRef[0] != null) handleRef[0].cancel();
+                })
+                .create();
+        try {
+            progressDialog.show();
+        } catch (Exception ignored) {
+        }
+
+        handleRef[0] = ServerPeekHelper.peekAsync(this, entry, result -> {
+            if (isFinishing() || (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && isDestroyed())) {
+                return;
+            }
+            try {
+                if (progressDialog.isShowing()) {
+                    progressDialog.dismiss();
+                }
+            } catch (Exception ignored) {
+            }
+
+            android.widget.ScrollView scrollView = new android.widget.ScrollView(ServerListActivity.this);
+            TextView tv = new TextView(ServerListActivity.this);
+            tv.setText(result.formatDisplayText(ServerListActivity.this));
+            tv.setTextIsSelectable(true);
+            tv.setTextSize(15f);
+            int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+            tv.setPadding(pad, pad / 2, pad, pad / 2);
+            scrollView.addView(tv);
+
+            new MaterialAlertDialogBuilder(ServerListActivity.this)
+                    .setTitle(getString(R.string.server_peek_title) + " — " + label)
+                    .setView(scrollView)
+                    .setPositiveButton(R.string.server_peek_connect, (d, w) -> onServerClick(entry))
+                    .setNeutralButton(R.string.server_peek_refresh, (d, w) -> showServerPeekDialog(entry))
+                    .setNegativeButton(R.string.button_close, null)
+                    .show();
+        });
+    }
+
     private void onServerLongClick(View view, ServerEntry entry, int position) {
         PopupMenu serverActions = new PopupMenu(this, view);
         serverActions.inflate(R.menu.server_actions);
         serverActions.setOnMenuItemClickListener(item -> {
             int itemId = item.getItemId();
-            if (itemId == R.id.action_publishsrv) {
+            if (itemId == R.id.action_peeksrv) {
+                showServerPeekDialog(entry);
+                return true;
+            } else if (itemId == R.id.action_publishsrv) {
                 confirmAndPublishServer(entry);
                 return true;
             } else if (itemId == R.id.action_exportsrv) {
@@ -1048,6 +1200,13 @@ public class ServerListActivity extends AppCompatActivity
             }
 
             private void setupAccessibilityActions(ServerEntry entry, int position) {
+                ViewCompat.addAccessibilityAction(itemView,
+                    getString(R.string.action_peek_server),
+                    (view, arguments) -> {
+                        showServerPeekDialog(entry);
+                        return true;
+                    });
+
                 ViewCompat.addAccessibilityAction(itemView, 
                     getString(R.string.action_editsrv),
                     (view, arguments) -> {
