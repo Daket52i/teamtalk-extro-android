@@ -35,6 +35,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"></uses-permission>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"></uses-permission>
     <uses-feature android:name="android.hardware.sensor.proximity" android:required="false"></uses-feature>
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" android:maxSdkVersion="35" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
@@ -64,7 +69,7 @@
 
         <meta-data
             android:name="android.max_aspect"
-            android:value="2.5" />
+            android:value="3.0" />
         <meta-data
             android:name="android.min_aspect"
             android:value="1.0" />
@@ -88,6 +93,7 @@
 
         <activity
             android:name=".gui.ServerListActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:icon="@drawable/ic_launcher"
             android:launchMode="singleTop"
             android:exported="true">
@@ -156,7 +162,7 @@
 
         <activity
             android:name=".gui.MainActivity"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:label="@string/title_activity_main"
             android:launchMode="singleTop"
             android:windowSoftInputMode="stateUnchanged|adjustResize"
@@ -171,6 +177,7 @@
 
         <activity
             android:name=".gui.StreamMediaActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:label="@string/title_activity_stream_media"
             android:exported="false">
         </activity>
@@ -288,6 +295,7 @@
 
         <activity
             android:name=".gui.BotManagerActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:label="@string/title_activity_bot_manager"
             android:theme="@style/AppTheme"
             android:windowSoftInputMode="stateHidden|adjustResize"

@@ -28,6 +28,7 @@ import java.util.regex.Pattern;
  * - "hitmo": rus.hitmotop.com (data-musmeta JSON) + rus.hitmos.fm fallback
  * - "mf":    muzofond.su (data-file / data-artist / data-track-title) + hitmo fallback
  * - "rt":    rutube.ru API search + play options HLS resolver
+ * - "ym":    Yandex Music REST API (search, charts, likes, track/album/playlist URLs)
  * - "radio": 32 curated Russian FM stations + radio-browser.info live search
  * - "voln":  Volnorez online stations
  * - "tv":    33 priority Russian Live TV channels
@@ -38,6 +39,7 @@ public final class BotMusicSearch {
     public static final String SERVICE_HITMO = "hitmo";
     public static final String SERVICE_MF = "mf";
     public static final String SERVICE_RUTUBE = "rt";
+    public static final String SERVICE_YANDEX = "ym";
     public static final String SERVICE_RADIO = "radio";
 
     public static final String USER_AGENT =
@@ -115,6 +117,7 @@ public final class BotMusicSearch {
         String s = svc.trim().toLowerCase(Locale.ROOT);
         if (s.equals("mf") || s.equals("mz") || s.equals("muzofond") || s.equals("музфонд")) return SERVICE_MF;
         if (s.equals("rt") || s.equals("rutube") || s.equals("рутуб")) return SERVICE_RUTUBE;
+        if (s.equals("ym") || s.equals("yandex") || s.equals("яндекс") || s.equals("ям")) return SERVICE_YANDEX;
         if (s.equals("radio") || s.equals("r") || s.equals("радио")) return SERVICE_RADIO;
         return SERVICE_HITMO;
     }
@@ -124,6 +127,7 @@ public final class BotMusicSearch {
         switch (s) {
             case SERVICE_MF: return "Музфонд (mf)";
             case SERVICE_RUTUBE: return "Rutube (rt)";
+            case SERVICE_YANDEX: return "Яндекс.Музыка (ym)";
             case SERVICE_RADIO: return "Радио (radio)";
             default: return "Хитмо (hitmo)";
         }
@@ -132,11 +136,18 @@ public final class BotMusicSearch {
     public static boolean isDirectUrl(String query) {
         if (query == null) return false;
         String q = query.trim().toLowerCase(Locale.ROOT);
-        return q.startsWith("http://") || q.startsWith("https://");
+        return q.startsWith("http://") || q.startsWith("https://") || q.startsWith(YandexMusicClient.YM_TRACK_PREFIX);
     }
 
     public static List<BotTrack> search(String service, String query) throws IOException {
+        return search(service, query, null);
+    }
+
+    public static List<BotTrack> search(String service, String query, String yandexToken) throws IOException {
         String q = query != null ? query.trim() : "";
+        if (YandexMusicClient.isYandexMusicUrl(q)) {
+            return YandexMusicClient.resolveYandexUrl(yandexToken, q);
+        }
         if (isDirectUrl(q)) {
             Matcher rtMatcher = RUTUBE_URL_ID.matcher(q);
             if (rtMatcher.find()) {
@@ -147,12 +158,14 @@ public final class BotMusicSearch {
                 }
                 throw new IOException("Rutube stream not found for video " + vid);
             }
-            boolean live = q.toLowerCase(Locale.ROOT).contains(".m3u8")
-                    || q.toLowerCase(Locale.ROOT).contains("stream")
-                    || q.toLowerCase(Locale.ROOT).contains("radio")
-                    || q.toLowerCase(Locale.ROOT).contains("volnorez.com")
-                    || q.toLowerCase(Locale.ROOT).contains(".aacp")
-                    || q.toLowerCase(Locale.ROOT).contains(".pls");
+            String low = q.toLowerCase(Locale.ROOT);
+            boolean live = low.contains(".m3u8")
+                    || low.contains("stream")
+                    || low.contains("radio")
+                    || low.contains("volnorez.com")
+                    || low.contains(".aacp")
+                    || low.contains(".pls")
+                    || low.contains(".m3u");
             String title = extractNameFromUrl(q);
             return Collections.singletonList(new BotTrack(title, "URL", q, "url", live, null, null));
         }
@@ -163,6 +176,8 @@ public final class BotMusicSearch {
                 return searchMuzofond(q);
             case SERVICE_RUTUBE:
                 return searchRutube(q);
+            case SERVICE_YANDEX:
+                return YandexMusicClient.searchTracks(yandexToken, q, MAX_RESULTS);
             case SERVICE_RADIO:
                 return searchRadio(q);
             case SERVICE_HITMO:
@@ -171,9 +186,6 @@ public final class BotMusicSearch {
         }
     }
 
-    /**
-     * Picks a random popular Russian hit from curated chanson/pop/rock queries on Hitmo/Muzofond.
-     */
     public static BotTrack searchRandomPop() throws IOException {
         List<String> queries = new ArrayList<>(DjBotCatalogs.POP_QUERIES);
         Collections.shuffle(queries, RANDOM);
@@ -309,7 +321,6 @@ public final class BotMusicSearch {
                 }
             }
         } catch (IOException ignored) {
-            // muzofond.su may return 403/Cloudflare — fallback to hitmo below
         }
 
         if (results.isEmpty()) {
@@ -354,6 +365,10 @@ public final class BotMusicSearch {
     }
 
     public static BotTrack resolveTrackForPlayback(BotTrack track) throws IOException {
+        return resolveTrackForPlayback(track, null);
+    }
+
+    public static BotTrack resolveTrackForPlayback(BotTrack track, String yandexToken) throws IOException {
         if (track == null) return null;
         if (track.url != null && track.url.startsWith("rutube://")) {
             String vid = track.url.substring("rutube://".length()).trim();
@@ -362,6 +377,10 @@ public final class BotMusicSearch {
                 throw new IOException("Rutube video_balancer.m3u8 unavailable for " + vid);
             }
             return resolved;
+        }
+        if (track.url != null && track.url.startsWith(YandexMusicClient.YM_TRACK_PREFIX)) {
+            String mp3Url = YandexMusicClient.resolveDirectMp3Url(yandexToken, track.url);
+            return new BotTrack(track.title, track.artist, mp3Url, SERVICE_YANDEX, false, null, "https://music.yandex.ru/");
         }
         return track;
     }

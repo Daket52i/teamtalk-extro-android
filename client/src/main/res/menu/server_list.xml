@@ -49,6 +49,11 @@
         android:orderInCategory="65"
         android:title="@string/action_backup_import"/>
     <item
+        android:id="@+id/action_extro_doctor"
+        app:showAsAction="never"
+        android:orderInCategory="70"
+        android:title="@string/action_extro_doctor"/>
+    <item
         android:id="@+id/action_check_updates"
         android:orderInCategory="900"
         app:showAsAction="never"

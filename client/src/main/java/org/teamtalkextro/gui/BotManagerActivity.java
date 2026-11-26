@@ -2,6 +2,7 @@ package org.teamtalkextro.gui;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -22,6 +23,7 @@ import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
@@ -37,7 +39,9 @@ import org.teamtalkextro.bot.BotConfig;
 import org.teamtalkextro.bot.BotMusicSearch;
 import org.teamtalkextro.bot.DjBotCatalogs;
 import org.teamtalkextro.bot.DjBotEpg;
+import org.teamtalkextro.bot.DjBotTelegramBridge;
 import org.teamtalkextro.bot.EmbeddedMediaBot;
+import org.teamtalkextro.bot.YandexMusicClient;
 import org.teamtalkextro.data.ServerEntry;
 
 /**
@@ -51,7 +55,8 @@ public class BotManagerActivity extends AppCompatActivity
     private static final String[] SERVICE_KEYS = {
             BotMusicSearch.SERVICE_HITMO,
             BotMusicSearch.SERVICE_MF,
-            BotMusicSearch.SERVICE_RUTUBE
+            BotMusicSearch.SERVICE_RUTUBE,
+            BotMusicSearch.SERVICE_YANDEX
     };
 
     private TeamTalkConnection mConnection;
@@ -61,10 +66,15 @@ public class BotManagerActivity extends AppCompatActivity
     private boolean updatingProfileSpinner = false;
     private boolean updatingServiceSpinner = false;
     private boolean passwordVisible = false;
+    private boolean ymTokenVisible = false;
+    private boolean tgTokenVisible = false;
 
+    private View contentContainer;
     private View cardUpgradeNotice;
     private TextView tvStatusBadge;
     private TextView tvNowPlaying;
+    private TextView tvVideoBadge;
+    private TextView tvTgStatus;
     private Button btnToggleBot;
     private Button btnFillCurrent;
 
@@ -97,6 +107,25 @@ public class BotManagerActivity extends AppCompatActivity
     private EditText etChannel;
     private EditText etChannelPass;
     private Spinner spinnerDefaultService;
+    private EditText etTvBitrate;
+    private MaterialSwitch switchTvAudioOnly;
+
+    private EditText etYmToken;
+    private ImageButton btnToggleYmToken;
+    private Button btnVerifyYm;
+    private Button btnYmChart;
+    private Button btnYmLikes;
+
+    private EditText etTgToken;
+    private ImageButton btnToggleTgToken;
+    private Button btnVerifyTg;
+    private EditText etTgOwner;
+    private EditText etTgNotifyChat;
+    private EditText etTgAdmins;
+    private EditText etTgServerName;
+    private MaterialSwitch switchTgJoinLeave;
+    private MaterialSwitch switchTgPmRelay;
+    private MaterialSwitch switchTgMediaRelay;
 
     private MaterialSwitch switchWelcomeEnabled;
     private EditText etWelcome;
@@ -130,6 +159,7 @@ public class BotManagerActivity extends AppCompatActivity
         }
 
         initViews();
+        ResponsiveLayoutHelper.applyCenteredMaxWidth(contentContainer, 760);
         updateUpgradeNoticeVisibility();
         setupServiceSpinners();
         loadProfilesAndPopulate(null);
@@ -141,10 +171,19 @@ public class BotManagerActivity extends AppCompatActivity
         bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
     }
 
+    @Override
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        ResponsiveLayoutHelper.applyCenteredMaxWidth(contentContainer, 760);
+    }
+
     private void initViews() {
+        contentContainer = findViewById(R.id.bot_manager_content_container);
         cardUpgradeNotice = findViewById(R.id.card_djbot_upgrade_notice);
         tvStatusBadge = findViewById(R.id.bot_status_badge);
         tvNowPlaying = findViewById(R.id.bot_now_playing);
+        tvVideoBadge = findViewById(R.id.bot_video_badge);
+        tvTgStatus = findViewById(R.id.bot_tg_status);
         btnToggleBot = findViewById(R.id.btn_bot_toggle);
         btnFillCurrent = findViewById(R.id.btn_bot_fill_current);
 
@@ -177,6 +216,25 @@ public class BotManagerActivity extends AppCompatActivity
         etChannel = findViewById(R.id.et_bot_channel);
         etChannelPass = findViewById(R.id.et_bot_channel_pass);
         spinnerDefaultService = findViewById(R.id.spinner_bot_default_service);
+        etTvBitrate = findViewById(R.id.et_bot_tv_bitrate);
+        switchTvAudioOnly = findViewById(R.id.switch_bot_tv_audio_only);
+
+        etYmToken = findViewById(R.id.et_bot_ym_token);
+        btnToggleYmToken = findViewById(R.id.btn_bot_toggle_ym_token);
+        btnVerifyYm = findViewById(R.id.btn_bot_verify_ym);
+        btnYmChart = findViewById(R.id.btn_bot_ym_chart);
+        btnYmLikes = findViewById(R.id.btn_bot_ym_likes);
+
+        etTgToken = findViewById(R.id.et_bot_tg_token);
+        btnToggleTgToken = findViewById(R.id.btn_bot_toggle_tg_token);
+        btnVerifyTg = findViewById(R.id.btn_bot_verify_tg);
+        etTgOwner = findViewById(R.id.et_bot_tg_owner);
+        etTgNotifyChat = findViewById(R.id.et_bot_tg_notify_chat);
+        etTgAdmins = findViewById(R.id.et_bot_tg_admins);
+        etTgServerName = findViewById(R.id.et_bot_tg_server_name);
+        switchTgJoinLeave = findViewById(R.id.switch_bot_tg_join_leave);
+        switchTgPmRelay = findViewById(R.id.switch_bot_tg_pm_relay);
+        switchTgMediaRelay = findViewById(R.id.switch_bot_tg_media_relay);
 
         switchWelcomeEnabled = findViewById(R.id.switch_bot_welcome_enabled);
         etWelcome = findViewById(R.id.et_bot_welcome);
@@ -208,7 +266,8 @@ public class BotManagerActivity extends AppCompatActivity
         String[] labels = {
                 getString(R.string.bot_service_hitmo),
                 getString(R.string.bot_service_mf),
-                getString(R.string.bot_service_rt)
+                getString(R.string.bot_service_rt),
+                getString(R.string.bot_service_ym)
         };
         ArrayAdapter<String> quickAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels);
         quickAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -266,6 +325,20 @@ public class BotManagerActivity extends AppCompatActivity
         spinnerQuickService.setSelection(svcIdx);
         updatingServiceSpinner = false;
 
+        etTvBitrate.setText(String.valueOf(cfg.tvVideoBitrate));
+        switchTvAudioOnly.setChecked(cfg.tvAudioOnly);
+
+        etYmToken.setText(cfg.yandexToken);
+
+        etTgToken.setText(cfg.telegramBotToken);
+        etTgOwner.setText(cfg.telegramOwnerUserId);
+        etTgNotifyChat.setText(cfg.telegramNotifyChatId);
+        etTgAdmins.setText(cfg.telegramAdminIds);
+        etTgServerName.setText(cfg.telegramServerName);
+        switchTgJoinLeave.setChecked(cfg.telegramNotifyJoinLeave);
+        switchTgPmRelay.setChecked(cfg.telegramForwardPrivateMsgs);
+        switchTgMediaRelay.setChecked(cfg.telegramRelayMediaFiles);
+
         switchWelcomeEnabled.setChecked(cfg.welcomeEnabled);
         etWelcome.setText(cfg.welcomeText);
 
@@ -300,6 +373,19 @@ public class BotManagerActivity extends AppCompatActivity
         int defIdx = Math.max(0, Math.min(SERVICE_KEYS.length - 1, spinnerDefaultService.getSelectedItemPosition()));
         cfg.defaultService = SERVICE_KEYS[defIdx];
         cfg.volume = seekVolume.getProgress();
+        cfg.tvVideoBitrate = parseBitrate(textOf(etTvBitrate), BotConfig.DEFAULT_TV_VIDEO_BITRATE);
+        cfg.tvAudioOnly = switchTvAudioOnly.isChecked();
+
+        cfg.yandexToken = etYmToken.getText() != null ? etYmToken.getText().toString().trim() : "";
+
+        cfg.telegramBotToken = etTgToken.getText() != null ? etTgToken.getText().toString().trim() : "";
+        cfg.telegramOwnerUserId = textOf(etTgOwner);
+        cfg.telegramNotifyChatId = textOf(etTgNotifyChat);
+        cfg.telegramAdminIds = textOf(etTgAdmins);
+        cfg.telegramServerName = textOf(etTgServerName);
+        cfg.telegramNotifyJoinLeave = switchTgJoinLeave.isChecked();
+        cfg.telegramForwardPrivateMsgs = switchTgPmRelay.isChecked();
+        cfg.telegramRelayMediaFiles = switchTgMediaRelay.isChecked();
 
         cfg.welcomeEnabled = switchWelcomeEnabled.isChecked();
         cfg.welcomeText = textOf(etWelcome);
@@ -410,7 +496,8 @@ public class BotManagerActivity extends AppCompatActivity
         btnPickFile.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
-            intent.setType("audio/*");
+            intent.setType("*/*");
+            intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"audio/*", "video/*"});
             try {
                 startActivityForResult(intent, REQUEST_PICK_AUDIO);
             } catch (Throwable t) {
@@ -458,13 +545,34 @@ public class BotManagerActivity extends AppCompatActivity
 
         btnTogglePass.setOnClickListener(v -> {
             passwordVisible = !passwordVisible;
-            int sel = etPassword.getSelectionEnd();
-            etPassword.setInputType(passwordVisible
-                    ? (InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
-                    : (InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD));
-            if (sel >= 0) etPassword.setSelection(sel);
-            btnTogglePass.setContentDescription(getString(passwordVisible ? R.string.hide_password : R.string.show_password));
+            togglePasswordField(etPassword, btnTogglePass, passwordVisible);
         });
+
+        btnToggleYmToken.setOnClickListener(v -> {
+            ymTokenVisible = !ymTokenVisible;
+            togglePasswordField(etYmToken, btnToggleYmToken, ymTokenVisible);
+        });
+
+        btnVerifyYm.setOnClickListener(v -> verifyYandexToken());
+
+        btnYmChart.setOnClickListener(v -> {
+            if (!ensureBotRunning()) return;
+            boundBot.playYandexChartFromUi();
+            Toast.makeText(this, R.string.djbot_toast_ym_loading, Toast.LENGTH_SHORT).show();
+        });
+
+        btnYmLikes.setOnClickListener(v -> {
+            if (!ensureBotRunning()) return;
+            boundBot.playYandexLikesFromUi();
+            Toast.makeText(this, R.string.djbot_toast_ym_loading, Toast.LENGTH_SHORT).show();
+        });
+
+        btnToggleTgToken.setOnClickListener(v -> {
+            tgTokenVisible = !tgTokenVisible;
+            togglePasswordField(etTgToken, btnToggleTgToken, tgTokenVisible);
+        });
+
+        btnVerifyTg.setOnClickListener(v -> verifyTelegramToken());
 
         btnSaveProfile.setOnClickListener(v -> {
             BotConfig cfg = readConfigFromFields();
@@ -725,6 +833,20 @@ public class BotManagerActivity extends AppCompatActivity
         }
 
         btnPause.setText(snap.paused ? R.string.karaoke_resume : R.string.karaoke_pause);
+        if (tvVideoBadge != null) {
+            tvVideoBadge.setVisibility(snap.streamingVideo ? View.VISIBLE : View.GONE);
+        }
+        if (tvTgStatus != null) {
+            if (snap.telegramConnected && !TextUtils.isEmpty(snap.telegramBotUsername)) {
+                tvTgStatus.setText(getString(R.string.djbot_tg_status_connected, snap.telegramBotUsername));
+                tvTgStatus.setVisibility(View.VISIBLE);
+            } else if (!TextUtils.isEmpty(snap.telegramStatusText)) {
+                tvTgStatus.setText("✈️ " + snap.telegramStatusText);
+                tvTgStatus.setVisibility(View.VISIBLE);
+            } else {
+                tvTgStatus.setVisibility(View.GONE);
+            }
+        }
         if (seekVolume.getProgress() != snap.volume) {
             seekVolume.setProgress(snap.volume);
         }
@@ -790,10 +912,74 @@ public class BotManagerActivity extends AppCompatActivity
         return et != null && et.getText() != null ? et.getText().toString().trim() : "";
     }
 
+    private void togglePasswordField(EditText field, ImageButton btn, boolean visible) {
+        int sel = field.getSelectionEnd();
+        field.setInputType(visible
+                ? (InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+                : (InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD));
+        if (sel >= 0) field.setSelection(sel);
+        btn.setContentDescription(getString(visible ? R.string.hide_password : R.string.show_password));
+    }
+
+    private void verifyYandexToken() {
+        String token = etYmToken.getText() != null ? etYmToken.getText().toString().trim() : "";
+        if (TextUtils.isEmpty(token)) {
+            Toast.makeText(this, R.string.djbot_err_ym_empty_token, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        btnVerifyYm.setEnabled(false);
+        new Thread(() -> {
+            try {
+                YandexMusicClient.AccountStatus st = YandexMusicClient.verifyToken(token);
+                runOnUiThread(() -> {
+                    btnVerifyYm.setEnabled(true);
+                    Toast.makeText(this, getString(R.string.djbot_ym_verified_ok, st.formatSummary()), Toast.LENGTH_LONG).show();
+                });
+            } catch (Throwable t) {
+                runOnUiThread(() -> {
+                    btnVerifyYm.setEnabled(true);
+                    Toast.makeText(this, getString(R.string.djbot_ym_verified_fail, t.getMessage()), Toast.LENGTH_LONG).show();
+                });
+            }
+        }, "Extro-VerifyYM").start();
+    }
+
+    private void verifyTelegramToken() {
+        String token = etTgToken.getText() != null ? etTgToken.getText().toString().trim() : "";
+        if (TextUtils.isEmpty(token)) {
+            Toast.makeText(this, R.string.djbot_err_tg_empty_token, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        btnVerifyTg.setEnabled(false);
+        new Thread(() -> {
+            try {
+                DjBotTelegramBridge.BotIdentity me = DjBotTelegramBridge.verifyBotToken(token);
+                runOnUiThread(() -> {
+                    btnVerifyTg.setEnabled(true);
+                    Toast.makeText(this, getString(R.string.djbot_tg_verified_ok, me.formatDisplay()), Toast.LENGTH_LONG).show();
+                });
+            } catch (Throwable t) {
+                runOnUiThread(() -> {
+                    btnVerifyTg.setEnabled(true);
+                    Toast.makeText(this, getString(R.string.djbot_tg_verified_fail, t.getMessage()), Toast.LENGTH_LONG).show();
+                });
+            }
+        }, "Extro-VerifyTG").start();
+    }
+
     private static int parsePort(String s, int def) {
         try {
             int v = Integer.parseInt(s.trim());
             return (v > 0 && v <= 65535) ? v : def;
+        } catch (Throwable ignored) {
+            return def;
+        }
+    }
+
+    private static int parseBitrate(String s, int def) {
+        try {
+            int v = Integer.parseInt(s.trim());
+            return Math.max(BotConfig.MIN_TV_VIDEO_BITRATE, Math.min(BotConfig.MAX_TV_VIDEO_BITRATE, v));
         } catch (Throwable ignored) {
             return def;
         }

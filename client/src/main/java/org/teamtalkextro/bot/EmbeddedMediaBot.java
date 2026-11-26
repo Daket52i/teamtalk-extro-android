@@ -92,11 +92,18 @@ public final class EmbeddedMediaBot {
         public final String hostInfo;
         public final boolean voiceAnnounce;
         public final boolean guardEnabled;
+        public final boolean streamingVideo;
+        public final int relayPort;
+        public final boolean telegramConnected;
+        public final String telegramBotUsername;
+        public final String telegramStatusText;
 
         public Snapshot(State state, String channelName, String nowPlaying, String liveStreamTitle,
                         String epgSummary, int listenersCount, boolean playing, boolean paused,
                         int volume, String activeService, int queueSize, String hostInfo,
-                        boolean voiceAnnounce, boolean guardEnabled) {
+                        boolean voiceAnnounce, boolean guardEnabled, boolean streamingVideo,
+                        int relayPort, boolean telegramConnected, String telegramBotUsername,
+                        String telegramStatusText) {
             this.state = state;
             this.channelName = channelName;
             this.nowPlaying = nowPlaying;
@@ -111,6 +118,11 @@ public final class EmbeddedMediaBot {
             this.hostInfo = hostInfo;
             this.voiceAnnounce = voiceAnnounce;
             this.guardEnabled = guardEnabled;
+            this.streamingVideo = streamingVideo;
+            this.relayPort = relayPort;
+            this.telegramConnected = telegramConnected;
+            this.telegramBotUsername = telegramBotUsername != null ? telegramBotUsername : "";
+            this.telegramStatusText = telegramStatusText != null ? telegramStatusText : "";
         }
     }
 
@@ -123,6 +135,7 @@ public final class EmbeddedMediaBot {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final BotAudioStreamer streamer;
     private final DjBotEpg epg;
+    private final DjBotTelegramBridge telegramBridge;
     private final CopyOnWriteArrayList<StateListener> listeners = new CopyOnWriteArrayList<>();
     private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "Extro-DjBotCmd");
@@ -169,7 +182,19 @@ public final class EmbeddedMediaBot {
         this.streamer.setOnTrackFinishedListener(this::onTrackFinished);
         this.streamer.setOnMetadataListener(this::onLiveTitleChanged);
         this.streamer.setOnListenersListener(this::onLiveListenersChanged);
+        this.streamer.setOnStateNoteListener(new BotAudioStreamer.OnStateNoteListener() {
+            @Override
+            public void onStreamerLog(String message) {
+                appendLog(message);
+            }
+
+            @Override
+            public void onVideoStateChanged(boolean streamingVideo) {
+                notifyStateChanged();
+            }
+        });
         this.epg = new DjBotEpg(appContext.getCacheDir(), this::appendLog);
+        this.telegramBridge = new DjBotTelegramBridge(appContext.getCacheDir(), createTelegramHostCallback());
     }
 
     // --- Pure-Java Guard Evaluation (unit-testable) ---
@@ -281,6 +306,26 @@ public final class EmbeddedMediaBot {
         return this.epg;
     }
 
+    public int getRelayPort() {
+        return this.streamer.getRelayPort();
+    }
+
+    public boolean isStreamingVideo() {
+        return this.streamer.isStreamingVideo();
+    }
+
+    public boolean isTelegramConnected() {
+        return this.telegramBridge.isConnected();
+    }
+
+    public String getTelegramBotUsername() {
+        return this.telegramBridge.getBotUsername();
+    }
+
+    public String getTelegramStatusText() {
+        return this.telegramBridge.getStatusText();
+    }
+
     public Snapshot getSnapshot() {
         synchronized (stateLock) {
             String host = activeConfig != null && !isBlank(activeConfig.host)
@@ -302,7 +347,12 @@ public final class EmbeddedMediaBot {
                     queue.size(),
                     host,
                     vo,
-                    guard
+                    guard,
+                    streamer.isStreamingVideo(),
+                    streamer.getRelayPort(),
+                    telegramBridge.isConnected(),
+                    telegramBridge.getBotUsername(),
+                    telegramBridge.getStatusText()
             );
         }
     }
@@ -345,6 +395,7 @@ public final class EmbeddedMediaBot {
         this.activeConfig = cfg;
         this.activeService = BotMusicSearch.normalizeService(cfg.defaultService);
         this.streamer.setVolume(cfg.volume);
+        this.streamer.configure(cfg.yandexToken, cfg.tvVideoBitrate, cfg.tvAudioOnly);
         this.selectMode = false;
         this.targetChannelOverride = null;
         this.targetChannelPassOverride = null;
@@ -364,16 +415,22 @@ public final class EmbeddedMediaBot {
         this.running = true;
         setState(State.CONNECTING);
         this.epg.ensureLoadedAsync();
+        if (!isBlank(cfg.telegramBotToken)) {
+            this.telegramBridge.start(cfg.telegramBotToken);
+        }
         appendLog("Запуск DJ Bot «" + cfg.nickname + "» → " + cfg.host + ":" + cfg.tcpPort
                 + (cfg.encrypted ? " (TLS)" : "")
-                + (cfg.guardEnabled ? " [Guard ВКЛ]" : ""));
+                + (cfg.guardEnabled ? " [Guard ВКЛ]" : "")
+                + (!isBlank(cfg.yandexToken) ? " [ЯМ]" : "")
+                + (!isBlank(cfg.telegramBotToken) ? " [TG]" : ""));
         this.botThread = new Thread(() -> runBotLoop(cfg), "Extro-DjBot");
         this.botThread.start();
     }
 
     public synchronized void stop() {
         this.running = false;
-        this.streamer.stop();
+        this.telegramBridge.stop();
+        this.streamer.shutdown();
         this.streamer.setBotClient(null);
 
         TeamTalkBase client = this.botClient;
@@ -484,7 +541,8 @@ public final class EmbeddedMediaBot {
         commandExecutor.execute(() -> {
             appendLog("Поиск [" + svc + "]: " + query);
             try {
-                List<BotMusicSearch.BotTrack> found = BotMusicSearch.search(svc, query);
+                String ymToken = activeConfig != null ? activeConfig.yandexToken : "";
+                List<BotMusicSearch.BotTrack> found = BotMusicSearch.search(svc, query, ymToken);
                 if (found == null || found.isEmpty()) {
                     appendLog("Ничего не найдено по запросу: " + query);
                     return;
@@ -492,11 +550,71 @@ public final class EmbeddedMediaBot {
                 synchronized (stateLock) {
                     lastSearchResults = new ArrayList<>(found);
                 }
-                startTrack(found.get(0), true);
+                if (YandexMusicClient.isYandexMusicUrl(query) && found.size() > 1) {
+                    enqueuePlaylistTracks(found, true);
+                } else {
+                    startTrack(found.get(0), true);
+                }
             } catch (Throwable t) {
                 appendLog("Ошибка поиска: " + t.getMessage());
             }
         });
+    }
+
+    public void playYandexChartFromUi() {
+        commandExecutor.execute(() -> {
+            String ymToken = activeConfig != null ? activeConfig.yandexToken : "";
+            if (isBlank(ymToken)) {
+                appendLog("⚠️ Яндекс.Музыка: не указан OAuth-токен в профиле");
+                return;
+            }
+            appendLog("📈 Загрузка чарта Яндекс.Музыки…");
+            try {
+                List<BotMusicSearch.BotTrack> tracks = YandexMusicClient.getChartTracks(ymToken, 20);
+                if (tracks.isEmpty()) {
+                    appendLog("Чарт Яндекс.Музыки пуст");
+                    return;
+                }
+                enqueuePlaylistTracks(tracks, true);
+            } catch (Throwable t) {
+                appendLog("Ошибка чарта ЯМ: " + t.getMessage());
+            }
+        });
+    }
+
+    public void playYandexLikesFromUi() {
+        commandExecutor.execute(() -> {
+            String ymToken = activeConfig != null ? activeConfig.yandexToken : "";
+            if (isBlank(ymToken)) {
+                appendLog("⚠️ Яндекс.Музыка: не указан OAuth-токен в профиле");
+                return;
+            }
+            appendLog("❤️ Загрузка любимых треков Яндекс.Музыки…");
+            try {
+                List<BotMusicSearch.BotTrack> tracks = YandexMusicClient.getLikedTracks(ymToken, 25);
+                if (tracks.isEmpty()) {
+                    appendLog("Список любимых треков ЯМ пуст");
+                    return;
+                }
+                enqueuePlaylistTracks(tracks, true);
+            } catch (Throwable t) {
+                appendLog("Ошибка лайков ЯМ: " + t.getMessage());
+            }
+        });
+    }
+
+    private void enqueuePlaylistTracks(List<BotMusicSearch.BotTrack> tracks, boolean announce) {
+        if (tracks == null || tracks.isEmpty()) return;
+        BotMusicSearch.BotTrack first = tracks.get(0);
+        if (tracks.size() > 1) {
+            synchronized (stateLock) {
+                for (int i = 1; i < tracks.size(); i++) {
+                    queue.add(tracks.get(i));
+                }
+            }
+            appendLog("➕ В очередь добавлено треков: " + (tracks.size() - 1));
+        }
+        startTrack(first, announce);
     }
 
     public void playTrackDirectFromUi(BotMusicSearch.BotTrack track) {
@@ -671,6 +789,7 @@ public final class EmbeddedMediaBot {
                                     boolean violated = enforceGuardIfNeeded(client, liveCfg, u);
                                     if (!violated) {
                                         maybeSendWelcome(liveCfg, u);
+                                        telegramBridge.notifyJoinLeave(u.szNickname, u.szUsername, "", true);
                                     }
                                 }
                             }
@@ -690,9 +809,14 @@ public final class EmbeddedMediaBot {
 
                         case ClientEvent.CLIENTEVENT_CMD_USER_LOGGEDOUT:
                             if (msg.user != null) {
+                                User removed;
                                 synchronized (stateLock) {
-                                    usersMap.remove(msg.user.nUserID);
+                                    removed = usersMap.remove(msg.user.nUserID);
                                     welcomedUserIds.remove(msg.user.nUserID);
+                                }
+                                if (initialLoginDone && msg.user.nUserID != myUserId) {
+                                    User who = removed != null ? removed : msg.user;
+                                    telegramBridge.notifyJoinLeave(who.szNickname, who.szUsername, "", false);
                                 }
                             }
                             break;
@@ -742,6 +866,12 @@ public final class EmbeddedMediaBot {
                         case ClientEvent.CLIENTEVENT_CMD_USER_TEXTMSG:
                             if (msg.textmessage != null) {
                                 handleIncomingTextMessage(msg.textmessage, liveCfg);
+                            }
+                            break;
+
+                        case ClientEvent.CLIENTEVENT_STREAM_MEDIAFILE:
+                            if (msg.mediafileinfo != null) {
+                                streamer.onStreamMediaFileEvent(msg.mediafileinfo);
                             }
                             break;
 
@@ -955,6 +1085,15 @@ public final class EmbeddedMediaBot {
         final String arg = parts.length > 1 ? parts[1].trim() : "";
 
         if (!isKnownCommand(cmd)) {
+            if (isPrivate) {
+                User senderUser;
+                synchronized (stateLock) {
+                    senderUser = usersMap.get(tm.nFromUserID);
+                }
+                String nick = senderUser != null && !isBlank(senderUser.szNickname)
+                        ? senderUser.szNickname : tm.szFromUsername;
+                telegramBridge.forwardPrivateMessage(tm.nFromUserID, nick, tm.szFromUsername, raw);
+            }
             return;
         }
 
@@ -998,6 +1137,7 @@ public final class EmbeddedMediaBot {
             case "cg":
             case "tv":
             case "pop":
+            case "ym":
             case "sv":
             case "fav":
             case "f":
@@ -1025,14 +1165,15 @@ public final class EmbeddedMediaBot {
                 reply(fromUserId, replyToChannel,
                         "🎧 Команды DJ Bot Extro (работают с / и без /):\n"
                         + "/play <запрос|URL> (p) — найти и включить\n"
+                        + "/ym <запрос | chart | likes> — Яндекс.Музыка\n"
                         + "/stop (s) | /skip (n) | /pause (sp) | /v <0-100>\n"
                         + "/sf <сек> | /sb <сек> — перемотка | /playlist (q) — очередь\n"
                         + "/radio [l <стр> | <№> | <поиск>] (r) — FM-радиостанции\n"
                         + "/voln [l <стр> | <№> | <поиск>] — живые станции Волнореза\n"
-                        + "/tv [l <стр> | <№> | <поиск> | epg | stop] — ТВ-каналы + EPG\n"
+                        + "/tv [l <стр> | <№> | <поиск> | epg | stop] — ТВ-каналы (видео+звук) + EPG\n"
                         + "/now — что сейчас в эфире (трек / ICY / Волнорез / ТВ EPG)\n"
                         + "/pop — случайный популярный русский хит\n"
-                        + "/sv [hitmo|mf|rt] — сервис музыки (сейчас: " + activeService + ")\n"
+                        + "/sv [hitmo|mf|rt|ym] — сервис музыки (сейчас: " + activeService + ")\n"
                         + "/fav [+ | - <№> | <№>] — избранное | /vo — озвучка треков\n"
                         + "Админам: /welcome <текст>, /settings, /set <ключ> <знач>, /j <канал>");
                 break;
@@ -1049,7 +1190,7 @@ public final class EmbeddedMediaBot {
                     return;
                 }
                 try {
-                    List<BotMusicSearch.BotTrack> found = BotMusicSearch.search(activeService, arg);
+                    List<BotMusicSearch.BotTrack> found = BotMusicSearch.search(activeService, arg, cfg.yandexToken);
                     if (found == null || found.isEmpty()) {
                         reply(fromUserId, replyToChannel, "Ничего не найдено (" + activeService + "): " + arg);
                         return;
@@ -1057,7 +1198,11 @@ public final class EmbeddedMediaBot {
                     synchronized (stateLock) {
                         lastSearchResults = new ArrayList<>(found);
                     }
-                    if (selectMode && !BotMusicSearch.isDirectUrl(arg) && found.size() > 1) {
+                    if (YandexMusicClient.isYandexMusicUrl(arg) && found.size() > 1) {
+                        enqueuePlaylistTracks(found, false);
+                        reply(fromUserId, replyToChannel, "🟡 Яндекс.Музыка: играет " + found.get(0).getDisplayName()
+                                + " (+ в очереди " + (found.size() - 1) + ")");
+                    } else if (selectMode && !BotMusicSearch.isDirectUrl(arg) && found.size() > 1) {
                         StringBuilder sb = new StringBuilder("Результаты (" + activeService + "), выберите /sl <№>:\n");
                         int lim = Math.min(found.size(), 10);
                         for (int i = 0; i < lim; i++) {
@@ -1070,6 +1215,10 @@ public final class EmbeddedMediaBot {
                 } catch (Throwable t) {
                     reply(fromUserId, replyToChannel, "Ошибка поиска: " + t.getMessage());
                 }
+                break;
+
+            case "ym":
+                handleYandexCommand(arg, fromUserId, replyToChannel, cfg);
                 break;
 
             case "sr":
@@ -1104,7 +1253,7 @@ public final class EmbeddedMediaBot {
             case "sv":
                 if (isBlank(arg)) {
                     reply(fromUserId, replyToChannel, "Текущий сервис: " + BotMusicSearch.getServiceLabel(activeService)
-                            + ". Доступны: hitmo, mf, rt");
+                            + ". Доступны: hitmo, mf, rt, ym");
                 } else {
                     String nextSvc = BotMusicSearch.normalizeService(arg);
                     if (BotMusicSearch.SERVICE_RADIO.equals(nextSvc)) {
@@ -1504,6 +1653,63 @@ public final class EmbeddedMediaBot {
         }
     }
 
+    private void handleYandexCommand(String arg, int fromUserId, boolean replyToChannel, BotConfig cfg) {
+        if (cfg == null || isBlank(cfg.yandexToken)) {
+            reply(fromUserId, replyToChannel,
+                    "🟡 Яндекс.Музыка: не указан OAuth-токен. Укажите его в профиле DJ Bot или командой /set services.ym.token <токен>");
+            return;
+        }
+        if (isBlank(arg)) {
+            reply(fromUserId, replyToChannel,
+                    "🟡 Яндекс.Музыка:\n/ym <запрос или ссылка> — поиск и воспроизведение\n/ym chart — топ-чарт\n/ym likes — ваши лайки");
+            return;
+        }
+        String low = arg.trim().toLowerCase(Locale.ROOT);
+        try {
+            if ("chart".equals(low) || "чарт".equals(low) || "top".equals(low)) {
+                List<BotMusicSearch.BotTrack> tracks = YandexMusicClient.getChartTracks(cfg.yandexToken, 20);
+                if (tracks.isEmpty()) {
+                    reply(fromUserId, replyToChannel, "Чарт Яндекс.Музыки пуст.");
+                    return;
+                }
+                enqueuePlaylistTracks(tracks, false);
+                reply(fromUserId, replyToChannel, "📈 Чарт Яндекс.Музыки: " + tracks.get(0).getDisplayName()
+                        + " (+ в очереди " + (tracks.size() - 1) + ")");
+                return;
+            }
+            if ("likes".equals(low) || "like".equals(low) || "лайки".equals(low) || "любимое".equals(low)) {
+                List<BotMusicSearch.BotTrack> tracks = YandexMusicClient.getLikedTracks(cfg.yandexToken, 25);
+                if (tracks.isEmpty()) {
+                    reply(fromUserId, replyToChannel, "Список любимых треков Яндекс.Музыки пуст.");
+                    return;
+                }
+                enqueuePlaylistTracks(tracks, false);
+                reply(fromUserId, replyToChannel, "❤️ Лайки Яндекс.Музыки: " + tracks.get(0).getDisplayName()
+                        + " (+ в очереди " + (tracks.size() - 1) + ")");
+                return;
+            }
+            List<BotMusicSearch.BotTrack> found = YandexMusicClient.isYandexMusicUrl(arg)
+                    ? YandexMusicClient.resolveYandexUrl(cfg.yandexToken, arg)
+                    : YandexMusicClient.searchTracks(cfg.yandexToken, arg, 15);
+            if (found == null || found.isEmpty()) {
+                reply(fromUserId, replyToChannel, "🟡 Яндекс.Музыка: ничего не найдено по запросу «" + arg + "»");
+                return;
+            }
+            synchronized (stateLock) {
+                lastSearchResults = new ArrayList<>(found);
+            }
+            if (YandexMusicClient.isYandexMusicUrl(arg) && found.size() > 1) {
+                enqueuePlaylistTracks(found, false);
+                reply(fromUserId, replyToChannel, "🟡 Плейлист ЯМ: " + found.get(0).getDisplayName()
+                        + " (+ в очереди " + (found.size() - 1) + ")");
+            } else {
+                enqueueOrPlay(found.get(0), fromUserId, replyToChannel);
+            }
+        } catch (Throwable t) {
+            reply(fromUserId, replyToChannel, "🟡 Ошибка Яндекс.Музыки: " + t.getMessage());
+        }
+    }
+
     private void handleSetCommand(String arg, int fromUserId, String fromUsername, boolean replyToChannel, BotConfig cfg) {
         if (!cfg.isAdmin(fromUsername)) {
             reply(fromUserId, replyToChannel, "Нет прав администратора для изменения настроек");
@@ -1512,7 +1718,9 @@ public final class EmbeddedMediaBot {
         if (isBlank(arg)) {
             reply(fromUserId, replyToChannel,
                     "Использование: /set <ключ> <значение>\n"
-                    + "Ключи: welcome, welcome.enabled, volume, channel, guard, guard.empty_nick, guard.mat, guard.botnet, guard.ban, service, vo");
+                    + "Ключи: welcome, welcome.enabled, volume, channel, guard, guard.empty_nick, guard.mat, "
+                    + "guard.botnet, guard.ban, service, vo, services.ym.token, telegram.token, telegram.owner, "
+                    + "telegram.notify_chat, tv.bitrate, tv.audio_only");
             return;
         }
         String[] kv = arg.split("\\s+", 2);
@@ -1600,6 +1808,63 @@ public final class EmbeddedMediaBot {
                 reply(fromUserId, replyToChannel, "✅ vo = " + (cfg.voiceAnnounceTrack ? "on" : "off"));
                 break;
 
+            case "services.ym.token":
+            case "ym.token":
+                cfg.yandexToken = "clear".equalsIgnoreCase(val) || "off".equalsIgnoreCase(val) ? "" : val;
+                streamer.configure(cfg.yandexToken, cfg.tvVideoBitrate, cfg.tvAudioOnly);
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, isBlank(cfg.yandexToken)
+                        ? "✅ Токен Яндекс.Музыки очищен"
+                        : "✅ Токен Яндекс.Музыки сохранён (***)");
+                break;
+
+            case "telegram.token":
+            case "tg.token":
+                cfg.telegramBotToken = "clear".equalsIgnoreCase(val) || "off".equalsIgnoreCase(val) ? "" : val;
+                persistActiveConfig();
+                if (isBlank(cfg.telegramBotToken)) {
+                    telegramBridge.stop();
+                    reply(fromUserId, replyToChannel, "✅ Telegram-бот отключён");
+                } else {
+                    telegramBridge.start(cfg.telegramBotToken);
+                    reply(fromUserId, replyToChannel, "✅ Токен Telegram-бота сохранён (***) и запущен");
+                }
+                break;
+
+            case "telegram.owner":
+            case "tg.owner":
+                cfg.telegramOwnerUserId = val;
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "✅ telegram.owner = " + cfg.telegramOwnerUserId);
+                break;
+
+            case "telegram.notify_chat":
+            case "tg.notify_chat":
+                cfg.telegramNotifyChatId = val;
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "✅ telegram.notify_chat = " + cfg.telegramNotifyChatId);
+                break;
+
+            case "tv.bitrate":
+                try {
+                    int kbps = Integer.parseInt(val);
+                    cfg.tvVideoBitrate = Math.max(BotConfig.MIN_TV_VIDEO_BITRATE,
+                            Math.min(BotConfig.MAX_TV_VIDEO_BITRATE, kbps));
+                    streamer.configure(cfg.yandexToken, cfg.tvVideoBitrate, cfg.tvAudioOnly);
+                    persistActiveConfig();
+                    reply(fromUserId, replyToChannel, "✅ tv.bitrate = " + cfg.tvVideoBitrate + " kbps");
+                } catch (NumberFormatException e) {
+                    reply(fromUserId, replyToChannel, "Укажите битрейт 250–2500 kbps");
+                }
+                break;
+
+            case "tv.audio_only":
+                cfg.tvAudioOnly = parseOnOff(val);
+                streamer.configure(cfg.yandexToken, cfg.tvVideoBitrate, cfg.tvAudioOnly);
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "✅ tv.audio_only = " + (cfg.tvAudioOnly ? "on" : "off"));
+                break;
+
             default:
                 reply(fromUserId, replyToChannel, "Неизвестный ключ: " + key);
                 break;
@@ -1635,11 +1900,19 @@ public final class EmbeddedMediaBot {
     private String formatSettingsSummary(BotConfig cfg) {
         String maskedPass = isBlank(cfg.password) ? "(нет)" : "***";
         String maskedChanPass = isBlank(cfg.channelPassword) ? "(нет)" : "***";
+        String maskedYm = isBlank(cfg.yandexToken) ? "(не задан)" : "***";
+        String maskedTg = isBlank(cfg.telegramBotToken) ? "(выкл)" : "***";
+        String tgState = telegramBridge.isConnected() && !isBlank(telegramBridge.getBotUsername())
+                ? ("@" + telegramBridge.getBotUsername())
+                : (isBlank(cfg.telegramBotToken) ? "выкл" : "подключение");
         return "⚙️ Настройки DJ Bot:\n"
                 + "Сервер: " + cfg.host + ":" + cfg.tcpPort + (cfg.encrypted ? " (TLS)" : "") + "\n"
                 + "Аккаунт: " + (isBlank(cfg.username) ? "(гость)" : cfg.username) + " / пароль: " + maskedPass + "\n"
                 + "Ник: " + cfg.nickname + " | Канал: " + cfg.channel + " (пароль: " + maskedChanPass + ")\n"
                 + "Сервис: " + BotMusicSearch.getServiceLabel(activeService) + " | Громкость: " + streamer.getVolume() + "%\n"
+                + "Яндекс.Музыка: " + maskedYm + " | ТВ видео: "
+                + (cfg.tvAudioOnly ? "только звук" : (cfg.tvVideoBitrate + " kbps")) + "\n"
+                + "Telegram-бот: " + maskedTg + " (" + tgState + ")\n"
                 + "Озвучка треков (/vo): " + (cfg.voiceAnnounceTrack ? "ВКЛ" : "ВЫКЛ") + "\n"
                 + "Приветствие: " + (cfg.welcomeEnabled ? "ВКЛ" : "ВЫКЛ")
                 + (isBlank(cfg.welcomeText) ? "" : (" — " + cfg.welcomeText)) + "\n"
@@ -1943,11 +2216,225 @@ public final class EmbeddedMediaBot {
         }
     }
 
+    private final ThreadLocal<StringBuilder> replyCapture = new ThreadLocal<>();
+
     private void reply(int userId, boolean toChannel, String text) {
+        StringBuilder cap = replyCapture.get();
+        if (cap != null) {
+            if (!isBlank(text)) {
+                if (cap.length() > 0) cap.append("\n\n");
+                cap.append(text.trim());
+            }
+            return;
+        }
         if (toChannel && currentChannelId > 0) {
             sendChannelMessage(text);
         } else {
             sendPrivateMessage(userId, text);
+        }
+    }
+
+    private DjBotTelegramBridge.HostCallback createTelegramHostCallback() {
+        return new DjBotTelegramBridge.HostCallback() {
+            @Override
+            public BotConfig getConfig() {
+                return activeConfig;
+            }
+
+            @Override
+            public void log(String message) {
+                appendLog(message);
+            }
+
+            @Override
+            public void onBridgeStateChanged() {
+                notifyStateChanged();
+            }
+
+            @Override
+            public String handleTelegramCommand(String cmd, String arg, boolean isAdmin, String senderLabel) {
+                if (!isKnownCommand(cmd)) {
+                    return "Неизвестная команда: /" + cmd + ". Список команд: /help";
+                }
+                appendLog("✈️ TG [" + senderLabel + "]: /" + cmd + (isBlank(arg) ? "" : (" " + arg)));
+                StringBuilder buf = new StringBuilder();
+                replyCapture.set(buf);
+                try {
+                    BotConfig cfg = activeConfig != null ? activeConfig : BotConfig.createDefault();
+                    String effectiveUser = isAdmin ? firstAdminNameOrSelf(cfg) : "__tg_guest__";
+                    executeCommand(cmd, arg, -1, effectiveUser, false);
+                } catch (Throwable t) {
+                    return "Ошибка команды: " + t.getMessage();
+                } finally {
+                    replyCapture.remove();
+                }
+                return buf.toString().trim();
+            }
+
+            @Override
+            public String getOnlineSummary() {
+                return buildOnlineSummaryText();
+            }
+
+            @Override
+            public String getStatusSummary() {
+                return buildBotStatusSummaryText();
+            }
+
+            @Override
+            public void sendPrivateToTeamTalkUser(int ttUserId, String text, String tgSenderName) {
+                sendPrivateMessage(ttUserId, "✈️ [Telegram • " + tgSenderName + "]: " + text);
+                appendLog("✈️ Ответ из TG пользователю #" + ttUserId + ": " + text);
+            }
+
+            @Override
+            public void playTelegramMediaFile(File file, String displayTitle, String senderLabel) {
+                if (file == null || !file.exists()) return;
+                appendLog("✈️ Медиа из TG [" + senderLabel + "]: " + displayTitle);
+                BotMusicSearch.BotTrack track = new BotMusicSearch.BotTrack(
+                        displayTitle, "Telegram • " + senderLabel, file.getAbsolutePath(),
+                        "tg", false, file.getAbsolutePath(), null);
+                commandExecutor.execute(() -> startTrack(track, true));
+            }
+
+            @Override
+            public String kickByQuery(String query) {
+                return kickOrBanUserFromTelegram(query, false);
+            }
+
+            @Override
+            public String banByQuery(String query) {
+                return kickOrBanUserFromTelegram(query, true);
+            }
+
+            @Override
+            public String broadcastServerText(String text) {
+                TeamTalkBase client = botClient;
+                if (client == null || isBlank(text)) {
+                    return "Бот не подключён к серверу.";
+                }
+                TextMessage tm = new TextMessage();
+                tm.nMsgType = TextMsgType.MSGTYPE_BROADCAST;
+                tm.szMessage = text.trim();
+                try {
+                    client.doTextMessage(tm);
+                    appendLog("📢 Рассылка из TG: " + text.trim());
+                    return "📢 Сообщение отправлено на весь сервер.";
+                } catch (Throwable t) {
+                    return "Ошибка рассылки: " + t.getMessage();
+                }
+            }
+
+            @Override
+            public void togglePauseFromTelegram() {
+                togglePause();
+            }
+
+            @Override
+            public void nextFromTelegram() {
+                nextTrack();
+            }
+
+            @Override
+            public void stopFromTelegram() {
+                stopPlayback();
+            }
+
+            @Override
+            public void playPopFromTelegram() {
+                playRandomPopFromUi();
+            }
+        };
+    }
+
+    private static String firstAdminNameOrSelf(BotConfig cfg) {
+        if (cfg == null || isBlank(cfg.adminUsers)) return "admin";
+        String[] parts = cfg.adminUsers.split("[,;\\n\\s]+");
+        for (String p : parts) {
+            if (!isBlank(p)) return p.trim();
+        }
+        return "admin";
+    }
+
+    private String buildOnlineSummaryText() {
+        BotConfig cfg = activeConfig != null ? activeConfig : BotConfig.createDefault();
+        String srvName = cfg.getEffectiveTelegramServerName();
+        StringBuilder sb = new StringBuilder();
+        sb.append("👥 Онлайн на ").append(srvName).append(":\n");
+        synchronized (stateLock) {
+            if (usersMap.isEmpty()) {
+                sb.append("Никого нет на сервере.");
+            } else {
+                int count = 0;
+                for (User u : usersMap.values()) {
+                    if (u == null) continue;
+                    count++;
+                    String nick = !isBlank(u.szNickname) ? u.szNickname : ("#" + u.nUserID);
+                    String login = !isBlank(u.szUsername) ? (" (" + u.szUsername + ")") : "";
+                    String ch = "";
+                    if (u.nChannelID > 0) {
+                        Channel c = channelsMap.get(u.nChannelID);
+                        ch = c != null && !isBlank(c.szName) ? (" — " + c.szName) : (" — #" + u.nChannelID);
+                    }
+                    sb.append(count).append(". ").append(nick).append(login).append(ch).append("\n");
+                }
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    private String buildBotStatusSummaryText() {
+        Snapshot s = getSnapshot();
+        StringBuilder sb = new StringBuilder();
+        sb.append("🎧 Статус DJ Bot:\n");
+        sb.append("Состояние: ").append(s.state.name());
+        if (!isBlank(s.channelName)) sb.append(" (").append(s.channelName).append(")");
+        sb.append("\n");
+        sb.append("Эфир: ").append(!isBlank(s.nowPlaying) ? s.nowPlaying : "тишина");
+        if (s.streamingVideo) sb.append(" [📺 Видео + звук]");
+        if (s.paused) sb.append(" (пауза)");
+        sb.append("\n");
+        if (!isBlank(s.liveStreamTitle)) {
+            sb.append("Метаданные: ").append(s.liveStreamTitle).append("\n");
+        }
+        if (!isBlank(s.epgSummary)) {
+            sb.append(s.epgSummary).append("\n");
+        }
+        sb.append("Громкость: ").append(s.volume).append("% | Очередь: ").append(s.queueSize)
+                .append(" | Сервис: ").append(s.activeService);
+        return sb.toString().trim();
+    }
+
+    private String kickOrBanUserFromTelegram(String query, boolean ban) {
+        TeamTalkBase client = this.botClient;
+        if (client == null) return "Бот не подключён к серверу.";
+        String q = query.trim().toLowerCase(Locale.ROOT);
+        User target = null;
+        synchronized (stateLock) {
+            for (User u : usersMap.values()) {
+                if (u == null || u.nUserID == myUserId) continue;
+                if (String.valueOf(u.nUserID).equals(q)
+                        || (u.szNickname != null && u.szNickname.toLowerCase(Locale.ROOT).contains(q))
+                        || (u.szUsername != null && u.szUsername.toLowerCase(Locale.ROOT).equals(q))) {
+                    target = u;
+                    break;
+                }
+            }
+        }
+        if (target == null) {
+            return "Пользователь не найден: " + query;
+        }
+        String who = !isBlank(target.szNickname) ? target.szNickname : ("#" + target.nUserID);
+        try {
+            if (ban) {
+                client.doBanUserEx(target.nUserID, BanType.BANTYPE_IPADDR);
+            }
+            client.doKickUser(target.nUserID, 0);
+            String note = (ban ? "🔨 Забанен и кикнут: " : "👢 Кикнут: ") + who + " (#" + target.nUserID + ")";
+            appendLog("✈️ TG " + note);
+            return note;
+        } catch (Throwable t) {
+            return "Ошибка: " + t.getMessage();
         }
     }
 

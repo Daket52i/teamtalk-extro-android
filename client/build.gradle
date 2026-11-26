@@ -15,9 +15,9 @@ android {
         applicationId = 'org.teamtalkextro'
         minSdk = 21
         targetSdk = 36
-        versionCode = 1000
+        versionCode = 1100
         // Single source of truth: the value is also injected into TeamTalk client name.
-        versionName = '5.35.0'
+        versionName = '5.36.0'
 
         testInstrumentationRunner = 'androidx.test.runner.AndroidJUnitRunner'
     }

@@ -161,6 +161,9 @@
                 android:id="@+id/action_connection_radar"
                 android:title="@string/action_connection_radar"/>
             <item
+                android:id="@+id/action_extro_doctor"
+                android:title="@string/action_extro_doctor"/>
+            <item
                 android:id="@+id/action_network_monitor"
                 android:title="@string/action_network_monitor"/>
             <item

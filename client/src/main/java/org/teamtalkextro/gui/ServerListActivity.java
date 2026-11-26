@@ -75,8 +75,10 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.view.ActionMode;
 import androidx.core.view.ViewCompat;
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton;
+import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import android.content.res.Configuration;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -320,7 +322,7 @@ public class ServerListActivity extends AppCompatActivity
 
     private void setupRecyclerView() {
         adapter = new ServerListAdapter();
-        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        applyResponsiveServerLayout();
         recyclerView.setAdapter(adapter);
         recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
@@ -336,6 +338,28 @@ public class ServerListActivity extends AppCompatActivity
             }
         });
         updateEmptyView();
+    }
+
+    private void applyResponsiveServerLayout() {
+        int widthDp = ResponsiveLayoutHelper.getScreenWidthDp(this);
+        int span = ResponsiveLayoutHelper.computeServerGridSpan(widthDp);
+        if (recyclerView != null) {
+            if (span > 1) {
+                recyclerView.setLayoutManager(new GridLayoutManager(this, span));
+            } else {
+                recyclerView.setLayoutManager(new LinearLayoutManager(this));
+            }
+        }
+        View searchCard = findViewById(R.id.server_search_card);
+        if (searchCard != null) {
+            ResponsiveLayoutHelper.applyCenteredMaxWidth(searchCard, 680);
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        applyResponsiveServerLayout();
     }
 
     private void setupSearch() {
@@ -650,6 +674,8 @@ public class ServerListActivity extends AppCompatActivity
         } else if (itemId == R.id.action_embedded_bot) {
             Intent botIntent = new Intent(ServerListActivity.this, BotManagerActivity.class);
             startActivity(botIntent);
+        } else if (itemId == R.id.action_extro_doctor) {
+            ExtroDiagnosticsHelper.showDialog(this, getService());
         } else if (itemId == R.id.action_enter_joincode) {
             enterJoinCode();
         } else if (itemId == R.id.action_settings) {

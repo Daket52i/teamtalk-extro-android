@@ -16,10 +16,8 @@ import java.util.UUID;
 
 /**
  * Persistent configuration profile for the embedded Android DJ Bot
- * (analog of TT-DJbot / welcome, guard, music, radio, Volnorez, TV + EPG).
- *
- * Uses fresh SharedPreferences keys ({@code extro_djbot_*}) so legacy TTMediaBot
- * profiles are not silently carried over after the bot replacement.
+ * (analog of TT-DJbot / welcome, guard, music, Yandex Music, radio,
+ * Volnorez, TV + video + EPG, and Telegram Bot bridge).
  */
 public class BotConfig {
 
@@ -30,6 +28,9 @@ public class BotConfig {
     public static final String DEFAULT_PROFILE_NAME = "DJ Bot";
     public static final String DEFAULT_NICKNAME = "!DJ Bot";
     public static final String DEFAULT_WELCOME_TEXT = "Добро пожаловать на сервер! Команды бота: /h";
+    public static final int DEFAULT_TV_VIDEO_BITRATE = 850;
+    public static final int MIN_TV_VIDEO_BITRATE = 250;
+    public static final int MAX_TV_VIDEO_BITRATE = 2500;
 
     public String id = UUID.randomUUID().toString();
     public String profileName = DEFAULT_PROFILE_NAME;
@@ -46,11 +47,24 @@ public class BotConfig {
     public String channel = "/";
     public String channelPassword = "";
 
-    // Playback
+    // Playback & TV Video
     public String defaultService = BotMusicSearch.SERVICE_HITMO;
     public int volume = 50;
     public boolean autoStatusTrack = true;
     public boolean voiceAnnounceTrack = false;
+    public String yandexToken = "";
+    public int tvVideoBitrate = DEFAULT_TV_VIDEO_BITRATE;
+    public boolean tvAudioOnly = false;
+
+    // Telegram Bot Bridge
+    public String telegramBotToken = "";
+    public String telegramOwnerUserId = "";
+    public String telegramNotifyChatId = "";
+    public String telegramAdminIds = "";
+    public String telegramServerName = "";
+    public boolean telegramNotifyJoinLeave = true;
+    public boolean telegramForwardPrivateMsgs = true;
+    public boolean telegramRelayMediaFiles = true;
 
     // Welcome & Greeting
     public boolean welcomeEnabled = true;
@@ -113,6 +127,17 @@ public class BotConfig {
         c.volume = this.volume;
         c.autoStatusTrack = this.autoStatusTrack;
         c.voiceAnnounceTrack = this.voiceAnnounceTrack;
+        c.yandexToken = this.yandexToken;
+        c.tvVideoBitrate = this.tvVideoBitrate;
+        c.tvAudioOnly = this.tvAudioOnly;
+        c.telegramBotToken = this.telegramBotToken;
+        c.telegramOwnerUserId = this.telegramOwnerUserId;
+        c.telegramNotifyChatId = this.telegramNotifyChatId;
+        c.telegramAdminIds = this.telegramAdminIds;
+        c.telegramServerName = this.telegramServerName;
+        c.telegramNotifyJoinLeave = this.telegramNotifyJoinLeave;
+        c.telegramForwardPrivateMsgs = this.telegramForwardPrivateMsgs;
+        c.telegramRelayMediaFiles = this.telegramRelayMediaFiles;
         c.welcomeEnabled = this.welcomeEnabled;
         c.welcomeText = this.welcomeText;
         c.guardEnabled = this.guardEnabled;
@@ -161,10 +186,23 @@ public class BotConfig {
 
         if (!BotMusicSearch.SERVICE_HITMO.equals(defaultService)
                 && !BotMusicSearch.SERVICE_MF.equals(defaultService)
-                && !BotMusicSearch.SERVICE_RUTUBE.equals(defaultService)) {
+                && !BotMusicSearch.SERVICE_RUTUBE.equals(defaultService)
+                && !BotMusicSearch.SERVICE_YANDEX.equals(defaultService)) {
             defaultService = BotMusicSearch.SERVICE_HITMO;
         }
         volume = Math.max(0, Math.min(100, volume));
+        yandexToken = yandexToken != null ? yandexToken.trim() : "";
+        if (tvVideoBitrate <= 0) {
+            tvVideoBitrate = DEFAULT_TV_VIDEO_BITRATE;
+        } else {
+            tvVideoBitrate = Math.max(MIN_TV_VIDEO_BITRATE, Math.min(MAX_TV_VIDEO_BITRATE, tvVideoBitrate));
+        }
+        telegramBotToken = telegramBotToken != null ? telegramBotToken.trim() : "";
+        telegramOwnerUserId = telegramOwnerUserId != null ? telegramOwnerUserId.trim() : "";
+        telegramNotifyChatId = telegramNotifyChatId != null ? telegramNotifyChatId.trim() : "";
+        telegramAdminIds = telegramAdminIds != null ? telegramAdminIds.trim() : "";
+        telegramServerName = telegramServerName != null ? telegramServerName.trim() : "";
+
         welcomeText = welcomeText != null ? welcomeText.trim() : "";
         if (guardMaxNickLen < 0) {
             guardMaxNickLen = 0;
@@ -180,6 +218,30 @@ public class BotConfig {
             return true;
         }
         return matchesCsvList(adminUsers, senderUsername);
+    }
+
+    public boolean isTelegramAdmin(long tgUserId) {
+        if (tgUserId == 0L) return false;
+        String idStr = String.valueOf(tgUserId);
+        if (!isBlank(telegramOwnerUserId) && idStr.equals(telegramOwnerUserId.trim())) {
+            return true;
+        }
+        if (!isBlank(telegramAdminIds) && matchesCsvList(telegramAdminIds, idStr)) {
+            return true;
+        }
+        return isBlank(telegramOwnerUserId) && isBlank(telegramAdminIds);
+    }
+
+    public String getEffectiveTelegramNotifyChatId() {
+        if (!isBlank(telegramNotifyChatId)) return telegramNotifyChatId.trim();
+        if (!isBlank(telegramOwnerUserId)) return telegramOwnerUserId.trim();
+        return "";
+    }
+
+    public String getEffectiveTelegramServerName() {
+        if (!isBlank(telegramServerName)) return telegramServerName.trim();
+        if (!isBlank(profileName) && !DEFAULT_PROFILE_NAME.equals(profileName)) return profileName.trim();
+        return !isBlank(host) ? host.trim() : "TeamTalk";
     }
 
     public boolean isTrusted(String userUsername, String userNickname) {
@@ -202,7 +264,7 @@ public class BotConfig {
             return false;
         }
         String needle = candidate.trim().toLowerCase(Locale.ROOT);
-        String[] parts = csv.split("[,;\\n]+");
+        String[] parts = csv.split("[,;\\n\\s]+");
         for (String p : parts) {
             if (!isBlank(p) && p.trim().toLowerCase(Locale.ROOT).equals(needle)) {
                 return true;
@@ -296,10 +358,6 @@ public class BotConfig {
 
     // --- SharedPreferences Persistence ---
 
-    /**
-     * Returns true if the user has already saved at least one DJ Bot profile
-     * (used to show the first-time upgrade notice after replacing TTMediaBot).
-     */
     public static boolean hasSavedProfiles(Context context) {
         if (context == null) return false;
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());

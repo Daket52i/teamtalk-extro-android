@@ -33,6 +33,59 @@ public class BotConfigTest {
         assertFalse(cfg.guardBanOnViolation);
         assertEquals(40, cfg.guardMaxNickLen);
         assertFalse(cfg.voiceAnnounceTrack);
+        assertEquals("", cfg.yandexToken);
+        assertEquals(850, cfg.tvVideoBitrate);
+        assertFalse(cfg.tvAudioOnly);
+        assertEquals("", cfg.telegramBotToken);
+        assertTrue(cfg.telegramNotifyJoinLeave);
+        assertTrue(cfg.telegramForwardPrivateMsgs);
+        assertTrue(cfg.telegramRelayMediaFiles);
+    }
+
+    @Test
+    public void testYandexTelegramAndTvConfigRoundTrip() {
+        BotConfig cfg = BotConfig.createDefault();
+        cfg.defaultService = BotMusicSearch.SERVICE_YANDEX;
+        cfg.yandexToken = "sample_oauth_token_123";
+        cfg.tvVideoBitrate = 1400;
+        cfg.tvAudioOnly = true;
+        cfg.telegramBotToken = "123456:TEST_BOT_TOKEN";
+        cfg.telegramOwnerUserId = "100000001";
+        cfg.telegramNotifyChatId = "-1001234567890";
+        cfg.telegramAdminIds = "111, 222";
+        cfg.telegramServerName = "Extro Radio";
+        cfg.telegramNotifyJoinLeave = false;
+        cfg.telegramForwardPrivateMsgs = true;
+        cfg.telegramRelayMediaFiles = false;
+
+        String json = BotConfig.serializeProfilesJson(Collections.singletonList(cfg));
+        List<BotConfig> restored = BotConfig.parseProfilesJson(json);
+        assertEquals(1, restored.size());
+        BotConfig r = restored.get(0);
+        assertEquals("ym", r.defaultService);
+        assertEquals("sample_oauth_token_123", r.yandexToken);
+        assertEquals(1400, r.tvVideoBitrate);
+        assertTrue(r.tvAudioOnly);
+        assertEquals("123456:TEST_BOT_TOKEN", r.telegramBotToken);
+        assertEquals("100000001", r.telegramOwnerUserId);
+        assertEquals("-1001234567890", r.telegramNotifyChatId);
+        assertEquals("Extro Radio", r.getEffectiveTelegramServerName());
+        assertEquals("-1001234567890", r.getEffectiveTelegramNotifyChatId());
+        assertFalse(r.telegramNotifyJoinLeave);
+        assertTrue(r.telegramForwardPrivateMsgs);
+        assertFalse(r.telegramRelayMediaFiles);
+        assertTrue(r.isTelegramAdmin(100000001L));
+        assertTrue(r.isTelegramAdmin(222L));
+        assertFalse(r.isTelegramAdmin(999L));
+
+        // Bitrate clamping check
+        BotConfig extreme = BotConfig.createDefault();
+        extreme.tvVideoBitrate = 9999;
+        extreme.normalize();
+        assertEquals(BotConfig.MAX_TV_VIDEO_BITRATE, extreme.tvVideoBitrate);
+        extreme.tvVideoBitrate = 50;
+        extreme.normalize();
+        assertEquals(BotConfig.MIN_TV_VIDEO_BITRATE, extreme.tvVideoBitrate);
     }
 
     @Test

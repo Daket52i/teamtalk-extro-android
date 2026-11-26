@@ -67,7 +67,9 @@ import android.support.v4.media.session.PlaybackStateCompat;
 import android.util.Log;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
+import android.content.res.Configuration;
 import android.view.KeyEvent;
+import org.teamtalkextro.bot.EmbeddedMediaBot;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -403,6 +405,7 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
         }
         setupButtons();
         setupDockedPanels();
+        applyResponsiveMainLayout();
         if (Build.VERSION.SDK_INT >= 26) {
             final MediaPlayer mMediaPlayer = MediaPlayer.create(this.ctx, R.raw.silence);
             if (mMediaPlayer != null) {
@@ -597,6 +600,11 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             radarItem.setEnabled(true).setVisible(true);
         }
 
+        MenuItem doctorItem = menu.findItem(R.id.action_extro_doctor);
+        if (doctorItem != null) {
+            doctorItem.setEnabled(true).setVisible(true);
+        }
+
         MenuItem afkItem = menu.findItem(R.id.action_afk_mode);
         if (afkItem != null) {
             boolean afkOn = getService() != null && getService().isAfkEnabled();
@@ -712,6 +720,9 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
             return true;
         } else if (itemId == R.id.action_connection_radar) {
             showConnectionRadarDialog();
+            return true;
+        } else if (itemId == R.id.action_extro_doctor) {
+            ExtroDiagnosticsHelper.showDialog(this, getService());
             return true;
         } else if (itemId == R.id.action_afk_mode) {
             showAfkDialog();
@@ -6124,6 +6135,25 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
     private ImageButton btnStreamBarPause;
     private ImageButton btnStreamBarStop;
     private ProgressBar streamBarProgress;
+
+    private View panelDjBotBar;
+    private TextView djBotBarBadgeIcon;
+    private TextView djBotBarTitle;
+    private TextView djBotBarSubtitle;
+    private ImageButton btnDjBotBarPause;
+    private ImageButton btnDjBotBarNext;
+    private ImageButton btnDjBotBarStop;
+    private EmbeddedMediaBot boundDjBot;
+    private final EmbeddedMediaBot.StateListener djBotStateListener = new EmbeddedMediaBot.StateListener() {
+        @Override
+        public void onBotStateChanged(EmbeddedMediaBot.Snapshot snapshot) {
+            updateDjBotDockedBar(snapshot);
+        }
+
+        @Override
+        public void onBotLogUpdated(java.util.List<String> logs) {
+        }
+    };
     private boolean recDotBlinkState = false;
 
     private void setupDockedPanels() {
@@ -6189,6 +6219,133 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                 Intent intent = new Intent(MainActivity.this, StreamMediaActivity.class);
                 startActivity(intent);
             });
+        }
+
+        this.panelDjBotBar = findViewById(R.id.panel_djbot_bar);
+        this.djBotBarBadgeIcon = findViewById(R.id.djbot_bar_badge_icon);
+        this.djBotBarTitle = findViewById(R.id.djbot_bar_title);
+        this.djBotBarSubtitle = findViewById(R.id.djbot_bar_subtitle);
+        this.btnDjBotBarPause = findViewById(R.id.btn_djbot_bar_pause);
+        this.btnDjBotBarNext = findViewById(R.id.btn_djbot_bar_next);
+        this.btnDjBotBarStop = findViewById(R.id.btn_djbot_bar_stop);
+
+        if (this.panelDjBotBar != null) {
+            this.panelDjBotBar.setOnClickListener(v ->
+                    startActivity(new Intent(MainActivity.this, BotManagerActivity.class)));
+        }
+        if (this.btnDjBotBarPause != null) {
+            this.btnDjBotBarPause.setOnClickListener(v -> {
+                if (this.boundDjBot != null) this.boundDjBot.togglePause();
+            });
+        }
+        if (this.btnDjBotBarNext != null) {
+            this.btnDjBotBarNext.setOnClickListener(v -> {
+                if (this.boundDjBot != null) this.boundDjBot.nextTrack();
+            });
+        }
+        if (this.btnDjBotBarStop != null) {
+            this.btnDjBotBarStop.setOnClickListener(v -> {
+                if (this.boundDjBot != null) this.boundDjBot.stopPlayback();
+            });
+        }
+    }
+
+    private void applyResponsiveMainLayout() {
+        View voiceCard = findViewById(R.id.voice_control_card);
+        if (voiceCard != null) {
+            ResponsiveLayoutHelper.applyCenteredMaxWidth(voiceCard, 840);
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        applyResponsiveMainLayout();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event != null && event.getAction() == KeyEvent.ACTION_DOWN && event.isCtrlPressed()) {
+            View focused = getCurrentFocus();
+            if (!(focused instanceof EditText)) {
+                int code = event.getKeyCode();
+                if (code == KeyEvent.KEYCODE_M) {
+                    TeamTalkService srv = getService();
+                    TeamTalkBase cli = getClient();
+                    if (srv != null && cli != null) {
+                        boolean txActive = (cli.getFlags() & ClientFlag.CLIENT_TX_VOICE) != 0;
+                        if (srv.isVoiceActivationEnabled()) {
+                            srv.enableVoiceActivation(false);
+                        }
+                        srv.enableVoiceTransmission(!txActive);
+                        adjustTxState(!txActive);
+                    }
+                    return true;
+                } else if (code == KeyEvent.KEYCODE_B) {
+                    startActivity(new Intent(this, BotManagerActivity.class));
+                    return true;
+                } else if (code >= KeyEvent.KEYCODE_1 && code <= KeyEvent.KEYCODE_4) {
+                    int tabIdx = code - KeyEvent.KEYCODE_1;
+                    if (this.mViewPager != null && this.mSectionsPagerAdapter != null
+                            && tabIdx < this.mSectionsPagerAdapter.getCount()) {
+                        this.mViewPager.setCurrentItem(tabIdx, true);
+                        return true;
+                    }
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void updateDjBotDockedBar(EmbeddedMediaBot.Snapshot snap) {
+        if (this.panelDjBotBar == null || isFinishing()) return;
+        if (snap == null || snap.state == EmbeddedMediaBot.State.STOPPED) {
+            if (this.panelDjBotBar.getVisibility() != View.GONE) {
+                this.panelDjBotBar.setVisibility(View.GONE);
+            }
+            return;
+        }
+        if (this.panelDjBotBar.getVisibility() != View.VISIBLE) {
+            this.panelDjBotBar.setVisibility(View.VISIBLE);
+        }
+        if (this.djBotBarBadgeIcon != null) {
+            this.djBotBarBadgeIcon.setText(snap.streamingVideo ? "📺" : "🎧");
+        }
+        String title;
+        if (!TextUtils.isEmpty(snap.epgSummary)) {
+            title = snap.epgSummary;
+        } else if (!TextUtils.isEmpty(snap.nowPlaying)) {
+            title = (snap.streamingVideo ? "📺 " : "") + snap.nowPlaying;
+        } else {
+            title = getString(R.string.docked_djbot_title);
+        }
+        if (this.djBotBarTitle != null) {
+            this.djBotBarTitle.setText(title);
+        }
+        StringBuilder sub = new StringBuilder();
+        if (!TextUtils.isEmpty(snap.liveStreamTitle)) {
+            sub.append(snap.liveStreamTitle);
+        } else if (!TextUtils.isEmpty(snap.channelName)) {
+            sub.append(snap.channelName);
+        } else {
+            sub.append(snap.state.name());
+        }
+        if (snap.listenersCount >= 0) {
+            sub.append(" • 👥 ").append(snap.listenersCount);
+        }
+        if (snap.paused) {
+            sub.append(" • ").append(getString(R.string.karaoke_paused_label));
+        }
+        if (snap.queueSize > 0) {
+            sub.append(" • +").append(snap.queueSize);
+        }
+        if (this.djBotBarSubtitle != null) {
+            this.djBotBarSubtitle.setText(sub.toString());
+        }
+        if (this.btnDjBotBarPause != null) {
+            this.btnDjBotBarPause.setImageResource(snap.paused
+                    ? android.R.drawable.ic_media_play
+                    : android.R.drawable.ic_media_pause);
         }
     }
 
@@ -6434,11 +6591,24 @@ public class MainActivity extends AppCompatActivity implements TeamTalkConnectio
                     finish();
                 }
             }));
+            EmbeddedMediaBot bot = service.getEmbeddedBot();
+            if (bot != null) {
+                if (this.boundDjBot != null && this.boundDjBot != bot) {
+                    this.boundDjBot.removeStateListener(this.djBotStateListener);
+                }
+                this.boundDjBot = bot;
+                bot.addStateListener(this.djBotStateListener);
+            }
         }
     }
 
     @Override
     public void onServiceDisconnected(TeamTalkService service) {
+        if (this.boundDjBot != null) {
+            this.boundDjBot.removeStateListener(this.djBotStateListener);
+            this.boundDjBot = null;
+        }
+        updateDjBotDockedBar(null);
         if (service != null) {
             service.setSleepTimerExpiredListener(null);
         }

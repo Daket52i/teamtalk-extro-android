@@ -853,7 +853,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         boolean botActive = isEmbeddedBotActive();
         if (serverEntry == null) {
             if (botActive) {
-                return "TTMediaBot: " + this.embeddedBot.getNotificationSummary();
+                return "DJ Bot: " + this.embeddedBot.getNotificationSummary();
             }
             return getString(R.string.app_name);
         }
