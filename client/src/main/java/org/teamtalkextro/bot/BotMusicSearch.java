@@ -81,9 +81,15 @@ public final class BotMusicSearch {
         public final boolean isLiveStream;
         public final String localUri;
         public final String referer;
+        public final List<String> fallbackUrls;
 
         public BotTrack(String title, String artist, String url, String service,
                         boolean isLiveStream, String localUri, String referer) {
+            this(title, artist, url, service, isLiveStream, localUri, referer, null);
+        }
+
+        public BotTrack(String title, String artist, String url, String service,
+                        boolean isLiveStream, String localUri, String referer, List<String> fallbackUrls) {
             this.title = title != null ? title.trim() : "";
             this.artist = artist != null ? artist.trim() : "";
             this.url = url != null ? url.trim() : "";
@@ -91,6 +97,42 @@ public final class BotMusicSearch {
             this.isLiveStream = isLiveStream;
             this.localUri = localUri;
             this.referer = referer;
+            if (fallbackUrls != null && !fallbackUrls.isEmpty()) {
+                List<String> cleaned = new ArrayList<>();
+                for (String fb : fallbackUrls) {
+                    if (fb != null) {
+                        String trimmed = fb.trim();
+                        if (!trimmed.isEmpty() && !trimmed.equals(this.url) && !cleaned.contains(trimmed)) {
+                            cleaned.add(trimmed);
+                        }
+                    }
+                }
+                this.fallbackUrls = Collections.unmodifiableList(cleaned);
+            } else {
+                this.fallbackUrls = Collections.emptyList();
+            }
+        }
+
+        public List<String> getAllCandidateUrls() {
+            List<String> out = new ArrayList<>();
+            if (!url.isEmpty()) {
+                out.add(url);
+            }
+            for (String fb : fallbackUrls) {
+                if (!fb.isEmpty() && !out.contains(fb)) {
+                    out.add(fb);
+                }
+            }
+            return Collections.unmodifiableList(out);
+        }
+
+        public BotTrack withCandidateOrder(List<String> orderedUrls) {
+            if (orderedUrls == null || orderedUrls.isEmpty()) {
+                return this;
+            }
+            String primary = orderedUrls.get(0);
+            List<String> rest = orderedUrls.size() > 1 ? orderedUrls.subList(1, orderedUrls.size()) : Collections.emptyList();
+            return new BotTrack(title, artist, primary, service, isLiveStream, localUri, referer, rest);
         }
 
         public String getDisplayName() {

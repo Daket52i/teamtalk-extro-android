@@ -165,41 +165,114 @@ public final class DjBotCatalogs {
         voln.add(mkVoln("Avocado-FM", "930301"));
         BUILT_IN_VOLNOREZ = Collections.unmodifiableList(voln);
 
-        // --- Exact 33 Priority Russian Live TV Channels (from 00_Top_RU_Live.m3u8) ---
+        // --- 40 Priority Russian Live TV Channels (Rostelecom / Wink + Official CDNs + Backup Mirrors) ---
         List<BotMusicSearch.BotTrack> tv = new ArrayList<>();
-        tv.add(mkTv("Первый канал", "http://31.148.5.241/kanal_1/index.m3u8"));
-        tv.add(mkTv("Россия 1", "http://31.148.5.241/kanal_2/index.m3u8"));
-        tv.add(mkTv("Матч! Ультра", "http://31.148.5.241/kanal_3/index.m3u8"));
-        tv.add(mkTv("НТВ", "http://31.148.5.241/kanal_4/index.m3u8"));
-        tv.add(mkTv("Пятый канал", "http://31.148.5.241/kanal_5/index.m3u8"));
-        tv.add(mkTv("Россия К", "http://31.148.5.241/kanal_6/index.m3u8"));
-        tv.add(mkTv("Россия 24", "http://31.148.5.241/kanal_7/index.m3u8"));
-        tv.add(mkTv("Карусель", "http://31.148.5.241/kanal_8/index.m3u8"));
-        tv.add(mkTv("ОТР", "http://31.148.5.241/kanal_9/index.m3u8"));
-        tv.add(mkTv("ТВ Центр", "http://31.148.5.241/kanal_10/index.m3u8"));
-        tv.add(mkTv("РЕН ТВ", "http://31.148.5.241/kanal_11/index.m3u8"));
-        tv.add(mkTv("Спас", "http://31.148.5.241/kanal_12/index.m3u8"));
-        tv.add(mkTv("СТС", "http://31.148.5.241/kanal_13/index.m3u8"));
-        tv.add(mkTv("Домашний", "http://31.148.5.241/kanal_14/index.m3u8"));
-        tv.add(mkTv("ТВ-3", "http://31.148.5.241/kanal_15/index.m3u8"));
-        tv.add(mkTv("Пятница!", "http://31.148.5.241/kanal_16/index.m3u8"));
-        tv.add(mkTv("Звезда", "http://31.148.5.241/kanal_17/index.m3u8"));
-        tv.add(mkTv("Мир", "http://31.148.5.241/kanal_18/index.m3u8"));
-        tv.add(mkTv("ТНТ", "http://31.148.5.241/kanal_19/index.m3u8"));
-        tv.add(mkTv("Муз-ТВ", "http://31.148.5.241/kanal_20/index.m3u8"));
-        tv.add(mkTv("2x2", "http://176.118.197.101/2x2/index.m3u8"));
-        tv.add(mkTv("Че!", "http://176.118.197.101/Che/index.m3u8"));
-        tv.add(mkTv("Карусель +4", "http://185.37.150.46/Karusel/index.m3u8"));
-        tv.add(mkTv("Мир 24", "http://hls.mirtv.cdnvideo.ru/mirtv-parampublish/mir24_2500/playlist.m3u8"));
-        tv.add(mkTv("360°", "https://cdn-evacoder-tv.facecast.io/evacoder_hls_hi/CkxfR1xNUAJwTgtXTBZTAJli/index.m3u8"));
-        tv.add(mkTv("Эфир ТВ", "http://tele2dvrnat01-02.cdnvideo.ru/stream/TatTVR_efir_d7b0c774f668d0652d2f435f03f2ef8a/hls/1024x576@1272/playlist.m3u8"));
-        tv.add(mkTv("1HD Music", "http://176.118.197.101/1HD/index.m3u8"));
-        tv.add(mkTv("BRIDGE TV", "http://178.134.1.158:8081/BRIDGE/index.m3u8"));
-        tv.add(mkTv("BRIDGE Rock", "http://178.134.1.158:8081/BRIDGEROCK/index.m3u8"));
-        tv.add(mkTv("Ностальгия", "http://176.118.197.101/Nostalgiya/index.m3u8"));
-        tv.add(mkTv("Мир сериала", "http://176.118.197.101/MirSeriala/index.m3u8"));
-        tv.add(mkTv("Музыка Первого", "http://88.212.15.50/live/test_muzyka_pervogo/playlist.m3u8"));
-        tv.add(mkTv("Бобёр", "http://88.212.15.50/live/test_bober/playlist.m3u8"));
+        tv.add(mkTv("Первый канал",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R03_OTT_VLG_KZN_1TV/variant.m3u8",
+                "http://31.148.5.241/kanal_1/index.m3u8"));
+        tv.add(mkTv("Россия 1",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R04_OTT_VLG_KZN_ROSSIA1/variant.m3u8",
+                "https://vgtrkregion-reg.cdnvideo.ru/vgtrk/kazan/russia1-hd/index.m3u8",
+                "http://31.148.5.241/kanal_2/index.m3u8"));
+        tv.add(mkTv("Матч! ТВ",
+                "http://31.148.5.241/kanal_3/index.m3u8"));
+        tv.add(mkTv("НТВ",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R03_OTT_VLG_KZN_NTV/variant.m3u8",
+                "https://cdn.ntv.ru/vitrina/index.m3u8",
+                "http://31.148.5.241/kanal_4/index.m3u8"));
+        tv.add(mkTv("Пятый канал",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R02_OTT_VLG_KZN_5TV/variant.m3u8",
+                "http://31.148.5.241/kanal_5/index.m3u8"));
+        tv.add(mkTv("Россия К",
+                "https://vgtrkregion-reg.cdnvideo.ru/vgtrk/2/kultura-hd/index.m3u8",
+                "http://31.148.5.241/kanal_6/index.m3u8"));
+        tv.add(mkTv("Россия 24",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R01_OTT_VLG_KZN_ROSSIA24/variant.m3u8",
+                "https://vgtrkregion-reg.cdnvideo.ru/vgtrk/kazan/russia24-sd/index.m3u8",
+                "http://31.148.5.241/kanal_7/index.m3u8"));
+        tv.add(mkTv("Карусель",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R01_KARUSEL/variant.m3u8",
+                "http://31.148.5.241/kanal_8/index.m3u8",
+                "http://185.37.150.46/Karusel/index.m3u8"));
+        tv.add(mkTv("ОТР",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R01_OTR/variant.m3u8",
+                "http://31.148.5.241/kanal_9/index.m3u8"));
+        tv.add(mkTv("ТВ Центр",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R04_OTT_VLG_KZN_TVC/variant.m3u8",
+                "http://31.148.5.241/kanal_10/index.m3u8"));
+        tv.add(mkTv("РЕН ТВ",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R02_OTT_VLG_KZN_RENTV/variant.m3u8",
+                "http://31.148.5.241/kanal_11/index.m3u8"));
+        tv.add(mkTv("Спас",
+                "http://31.148.5.241/kanal_12/index.m3u8"));
+        tv.add(mkTv("СТС",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R02_OTT_VLG_KZN_STS/variant.m3u8",
+                "http://31.148.5.241/kanal_13/index.m3u8"));
+        tv.add(mkTv("Домашний",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R04_OTT_VLG_KZN_DOMASHNY/variant.m3u8",
+                "http://31.148.5.241/kanal_14/index.m3u8"));
+        tv.add(mkTv("ТВ-3",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R01_OTT_VLG_KZN_TV3/variant.m3u8",
+                "http://31.148.5.241/kanal_15/index.m3u8"));
+        tv.add(mkTv("Пятница!",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R01_FRIDAY/variant.m3u8",
+                "http://31.148.5.241/kanal_16/index.m3u8"));
+        tv.add(mkTv("Звезда",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R03_ZVEZDA/variant.m3u8",
+                "http://31.148.5.241/kanal_17/index.m3u8"));
+        tv.add(mkTv("Мир",
+                "http://hls.mirtv.cdnvideo.ru/mirtv-parampublish/mirtv_2500/playlist.m3u8",
+                "http://31.148.5.241/kanal_18/index.m3u8"));
+        tv.add(mkTv("ТНТ",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R01_OTT_VLG_KZN_TNT/variant.m3u8",
+                "http://31.148.5.241/kanal_19/index.m3u8"));
+        tv.add(mkTv("Муз-ТВ",
+                "http://31.148.5.241/kanal_20/index.m3u8"));
+        tv.add(mkTv("2x2",
+                "http://176.118.197.101/2x2/index.m3u8"));
+        tv.add(mkTv("Че!",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R02_PERETZ/variant.m3u8",
+                "http://176.118.197.101/Che/index.m3u8"));
+        tv.add(mkTv("Ю",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R03_U/variant.m3u8"));
+        tv.add(mkTv("Мир 24",
+                "http://hls.mirtv.cdnvideo.ru/mirtv-parampublish/mir24_2500/playlist.m3u8"));
+        tv.add(mkTv("360°",
+                "https://cdn-evacoder-tv.facecast.io/evacoder_hls_hi/CkxfR1xNUAJwTgtXTBZTAJli/index.m3u8",
+                "https://live-vgtrksmotrim.cdnvideo.ru/vgtrksmotrim/smotrim-live-03-srt.smil/playlist.m3u8"));
+        tv.add(mkTv("Известия",
+                "http://igi-hls.cdnvideo.ru/igi/igi_tcode/playlist.m3u8"));
+        tv.add(mkTv("Эфир ТВ",
+                "http://tele2dvrnat01-02.cdnvideo.ru/stream/TatTVR_efir_d7b0c774f668d0652d2f435f03f2ef8a/hls/1024x576@1272/playlist.m3u8",
+                "https://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R01_EFIR/variant.m3u8?version=2"));
+        tv.add(mkTv("Татарстан 24",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R02_OTT_VLG_KZN_EFIR24/variant.m3u8",
+                "http://tele2dvrnat01-02.cdnvideo.ru/stream/TatTVR_tat24_bf1f738079c0cf5c4a67893c16bceda9/hls/1024x576@1272/playlist.m3u8"));
+        tv.add(mkTv("ТНВ Татарстан",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R01_OTT_VLG_KZN_TNVT/variant.m3u8"));
+        tv.add(mkTv("ТНВ Планета",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R05_TNV/variant.m3u8"));
+        tv.add(mkTv("Майдан ТВ",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R05_OTT_VLG_KZN_MAIDAN/variant.m3u8",
+                "http://live-maidantv.cdnvideo.ru/maidantv/maidantv.smil/tracks-v2a1/mono.ts.m3u8"));
+        tv.add(mkTv("TMTV",
+                "http://rt-vlg-kzn-htlive.cdn.ngenix.net/hls/CH_R03_OTT_VLG_KZN_TMTV/variant.m3u8?version=2"));
+        tv.add(mkTv("1HD Music",
+                "http://176.118.197.101/1HD/index.m3u8"));
+        tv.add(mkTv("BRIDGE TV",
+                "http://178.134.1.158:8081/BRIDGE/index.m3u8"));
+        tv.add(mkTv("BRIDGE Rock",
+                "http://178.134.1.158:8081/BRIDGEROCK/index.m3u8"));
+        tv.add(mkTv("Ностальгия",
+                "http://176.118.197.101/Nostalgiya/index.m3u8"));
+        tv.add(mkTv("Мир сериала",
+                "http://176.118.197.101/MirSeriala/index.m3u8"));
+        tv.add(mkTv("Музыка Первого",
+                "http://88.212.15.50/live/test_muzyka_pervogo/playlist.m3u8"));
+        tv.add(mkTv("Бобёр",
+                "http://88.212.15.50/live/test_bober/playlist.m3u8"));
+        tv.add(mkTv("Красная линия",
+                "http://s55766.cdn.ngenix.net/s55766-media-origin/rline_high/index.m3u8"));
         BUILT_IN_TV = Collections.unmodifiableList(tv);
 
         // --- Curated Russian chanson / pop / rock queries for /pop ---
@@ -244,8 +317,9 @@ public final class DjBotCatalogs {
                 name, "Волнорез", "https://stream.volnorez.com/live-app/" + id, SERVICE_VOLN, true, null, "https://volnorez.com/");
     }
 
-    private static BotMusicSearch.BotTrack mkTv(String name, String url) {
-        return new BotMusicSearch.BotTrack(name, "ТВ", url, SERVICE_TV, true, null, null);
+    private static BotMusicSearch.BotTrack mkTv(String name, String url, String... fallbacks) {
+        List<String> fb = (fallbacks != null && fallbacks.length > 0) ? Arrays.asList(fallbacks) : null;
+        return new BotMusicSearch.BotTrack(name, "ТВ", url, SERVICE_TV, true, null, null, fb);
     }
 
     /**
@@ -370,7 +444,7 @@ public final class DjBotCatalogs {
                 conn.setConnectTimeout(4000);
                 conn.setReadTimeout(4000);
                 conn.setRequestMethod("GET");
-                conn.setRequestProperty("User-Agent", BotMusicSearch.USER_AGENT);
+                conn.setRequestProperty("User-Agent", LocalMediaRelayServer.selectUserAgentForUrl(current, null));
                 int code = conn.getResponseCode();
                 if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
                     String loc = conn.getHeaderField("Location");

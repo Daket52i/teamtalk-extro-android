@@ -898,12 +898,21 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         return this.mychannel;
     }
 
+    private String lastForegroundNotifText = null;
+    private boolean lastForegroundNotifStreaming = false;
+    private int lastForegroundServiceType = -1;
+    private String lastSleepNotifText = null;
+    private long lastSleepNotifAtMs = 0L;
+
     public void displayNotification(boolean enabled) {
         Notification notification = this.widget;
         if (enabled) {
             if (this.ttserver == null && !isEmbeddedBotActive()) {
                 return;
             }
+            String nextText = getNotificationText();
+            boolean streamingNow = isStreamingMedia();
+            int nextFgsType = getMyForegroundServiceType();
             if (notification == null) {
                 this.notificationManager = (NotificationManager) getSystemService("notification");
                 Intent ui = new Intent(this, (Class<?>) MainActivity.class);
@@ -922,10 +931,10 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
                         .setContentIntent(PendingIntent.getActivity(this, 0, ui, 201326592))
                         .setOngoing(true)
                         .setAutoCancel(false)
-                        .setContentText(getNotificationText())
+                        .setContentText(nextText)
                         .setShowWhen(false);
 
-                if (isStreamingMedia()) {
+                if (streamingNow) {
                     Intent streamIntent = new Intent(this, org.teamtalkextro.gui.StreamMediaActivity.class);
                     PendingIntent streamPi = PendingIntent.getActivity(this, 101, streamIntent, PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
                     builder.addAction(R.drawable.teamtalk_green, getString(R.string.action_stream_control), streamPi);
@@ -937,11 +946,15 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
                 }
 
                 this.widget = builder.build();
+                this.lastForegroundNotifText = nextText;
+                this.lastForegroundNotifStreaming = streamingNow;
+                this.lastForegroundServiceType = nextFgsType;
                 try {
-                    ServiceCompat.startForeground(this, 1, this.widget, getMyForegroundServiceType());
+                    ServiceCompat.startForeground(this, 1, this.widget, nextFgsType);
                 } catch (SecurityException e) {
-                    Log.e("bearware", "SecurityException starting foreground service with type " + getMyForegroundServiceType() + ", falling back to basic types", e);
+                    Log.e("bearware", "SecurityException starting foreground service with type " + nextFgsType + ", falling back to basic types", e);
                     this.isScreenSharingActive = false;
+                    this.lastForegroundServiceType = 128 | 2;
                     try {
                         ServiceCompat.startForeground(this, 1, this.widget, 128 | 2);
                     } catch (Throwable t) {
@@ -950,19 +963,28 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
                 }
                 return;
             }
+            if (nextText != null && nextText.equals(this.lastForegroundNotifText)
+                    && streamingNow == this.lastForegroundNotifStreaming
+                    && nextFgsType == this.lastForegroundServiceType) {
+                return;
+            }
             NotificationCompat.Builder builder = new NotificationCompat.Builder(this, this.widget)
-                    .setContentText(getNotificationText());
-            if (isStreamingMedia()) {
+                    .setContentText(nextText);
+            if (streamingNow) {
                 Intent streamIntent = new Intent(this, org.teamtalkextro.gui.StreamMediaActivity.class);
                 PendingIntent streamPi = PendingIntent.getActivity(this, 101, streamIntent, PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
                 builder.addAction(R.drawable.teamtalk_green, getString(R.string.action_stream_control), streamPi);
             }
             this.widget = builder.build();
+            this.lastForegroundNotifText = nextText;
+            this.lastForegroundNotifStreaming = streamingNow;
+            this.lastForegroundServiceType = nextFgsType;
             try {
-                ServiceCompat.startForeground(this, 1, this.widget, getMyForegroundServiceType());
+                ServiceCompat.startForeground(this, 1, this.widget, nextFgsType);
             } catch (SecurityException e) {
-                Log.e("bearware", "SecurityException updating foreground service with type " + getMyForegroundServiceType() + ", falling back to basic types", e);
+                Log.e("bearware", "SecurityException updating foreground service with type " + nextFgsType + ", falling back to basic types", e);
                 this.isScreenSharingActive = false;
+                this.lastForegroundServiceType = 128 | 2;
                 try {
                     ServiceCompat.startForeground(this, 1, this.widget, 128 | 2);
                 } catch (Throwable t) {
@@ -979,6 +1001,9 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         } catch (Exception ignored) {
         }
         this.widget = null;
+        this.lastForegroundNotifText = null;
+        this.lastForegroundNotifStreaming = false;
+        this.lastForegroundServiceType = -1;
     }
 
     public int getMyForegroundServiceType() {
@@ -2676,7 +2701,10 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
 
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (nm != null) {
+            String sleepText = getString(R.string.sleep_timer_expired_toast);
+            long nowMs = SystemClock.uptimeMillis();
+            boolean isDuplicate = sleepText.equals(this.lastSleepNotifText) && (nowMs - this.lastSleepNotifAtMs) < 3000L;
+            if (nm != null && !isDuplicate) {
                 if (Build.VERSION.SDK_INT >= 26) {
                     NotificationChannel ch = new NotificationChannel(UI_CHANNEL_ID, getString(R.string.app_name), NotificationManager.IMPORTANCE_DEFAULT);
                     nm.createNotificationChannel(ch);
@@ -2684,9 +2712,11 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
                 Notification n = new NotificationCompat.Builder(this, UI_CHANNEL_ID)
                         .setSmallIcon(R.drawable.teamtalk_green)
                         .setContentTitle(getString(R.string.sleep_timer_title))
-                        .setContentText(getString(R.string.sleep_timer_expired_toast))
+                        .setContentText(sleepText)
                         .setAutoCancel(true)
                         .build();
+                this.lastSleepNotifText = sleepText;
+                this.lastSleepNotifAtMs = nowMs;
                 nm.notify(9330, n);
             }
         } catch (Throwable ignored) {}

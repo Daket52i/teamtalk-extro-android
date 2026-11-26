@@ -2013,4 +2013,7 @@
     <string name="doctor_form_tablet">Планшет / широкий экран</string>
     <string name="doctor_form_phone">Смартфон</string>
     <string name="doctor_not_connected">Не подключено</string>
+    <string name="doctor_cache_size">Кэш приложения: %1$s МБ</string>
+    <string name="doctor_btn_clear_cache">🧹 Очистить кэш</string>
+    <string name="doctor_cache_cleared_toast">Кэш очищен: освобождено %1$s МБ</string>
 </resources>

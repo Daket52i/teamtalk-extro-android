@@ -614,18 +614,50 @@ public final class BotAudioStreamer {
                     startIcyMetadataPoller(streamUrl, track.referer, gen);
                 }
 
-                // Register on loopback LocalMediaRelayServer so native FFmpeg receives clean HTTP/1.1 on 127.0.0.1
-                String relayUrl = isHls
-                        ? relayServer.registerHls(streamUrl, track.referer, wantVideo)
-                        : relayServer.registerLive(streamUrl, track.referer);
+                NativeResult res = NativeResult.FAILED_BEFORE_PLAY;
+                if (isHls) {
+                    java.util.List<String> candidates = track.getAllCandidateUrls();
+                    if (candidates.isEmpty() && !TextUtils.isEmpty(streamUrl)) {
+                        candidates = java.util.Collections.singletonList(streamUrl);
+                    }
+                    for (int mIdx = 0; mIdx < candidates.size() && isStillActive(gen); mIdx++) {
+                        String candUrl = candidates.get(mIdx);
+                        if (mIdx > 0) {
+                            logNote("📺 Попытка зеркала #" + (mIdx + 1) + "…");
+                        }
+                        String ua = LocalMediaRelayServer.selectUserAgentForUrl(candUrl, null);
 
-                NativeResult res = streamWithNativeMediaFile(relayUrl, wantVideo, true, gen);
+                        // 1) Primary: Continuous MPEG-TS HTTP stream (/tv/<id>.ts)
+                        logNote("📺 Непрерывный MPEG-TS поток" + (wantVideo ? " (видео + звук)…" : " (аудио)…"));
+                        String tsRelayUrl = relayServer.registerTsStream(
+                                candUrl, track.referer, ua, wantVideo, this.tvVideoBitrate);
+                        res = streamWithNativeMediaFile(tsRelayUrl, wantVideo, true, gen);
+                        if (res != NativeResult.FAILED_BEFORE_PLAY || !isStillActive(gen)) {
+                            break;
+                        }
 
-                // If TV with video failed before playing, retry TV audio-only first
-                if (res == NativeResult.FAILED_BEFORE_PLAY && wantVideo && isStillActive(gen)) {
-                    logNote("📺 ТВ-видео недоступно на этом сервере/канале — запускаю ТВ в аудио-режиме…");
-                    String audioRelayUrl = relayServer.registerHls(streamUrl, track.referer, false);
-                    res = streamWithNativeMediaFile(audioRelayUrl, false, true, gen);
+                        // 2) Secondary: Fixed HLS playlist relay (/hls/<id>.m3u8 with .ts/.m4s extensions)
+                        logNote("📺 Переключаюсь на HLS-плейлист (/hls)…");
+                        String hlsRelayUrl = relayServer.registerHls(candUrl, track.referer, ua, wantVideo);
+                        res = streamWithNativeMediaFile(hlsRelayUrl, wantVideo, true, gen);
+                        if (res != NativeResult.FAILED_BEFORE_PLAY || !isStillActive(gen)) {
+                            break;
+                        }
+
+                        // 3) Tertiary: Audio-only continuous MPEG-TS fallback for this mirror
+                        if (wantVideo && isStillActive(gen)) {
+                            logNote("📺 ТВ-видео недоступно на этом зеркале — пробую аудио-режим (MPEG-TS)…");
+                            String audioTsUrl = relayServer.registerTsStream(candUrl, track.referer, ua, false, 0);
+                            res = streamWithNativeMediaFile(audioTsUrl, false, true, gen);
+                            if (res != NativeResult.FAILED_BEFORE_PLAY || !isStillActive(gen)) {
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    // Register non-HLS live stream (FM Radio / Volnorez) on loopback LocalMediaRelayServer
+                    String relayUrl = relayServer.registerLive(streamUrl, track.referer);
+                    res = streamWithNativeMediaFile(relayUrl, false, true, gen);
                 }
 
                 // If MediaFile is rejected (e.g. account lacks TRANSMIT_MEDIAFILE), fall back to voice PCM

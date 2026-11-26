@@ -17,6 +17,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import dk.bearware.ClientFlag;
 import dk.bearware.ClientStatistics;
 import dk.bearware.TeamTalkBase;
+import java.util.Locale;
 import org.teamtalkextro.BuildConfig;
 import org.teamtalkextro.R;
 import org.teamtalkextro.backend.TeamTalkService;
@@ -39,12 +40,19 @@ public final class ExtroDiagnosticsHelper {
                 .setTitle(R.string.doctor_dialog_title)
                 .setMessage(report)
                 .setPositiveButton(android.R.string.ok, null)
-                .setNeutralButton(R.string.doctor_btn_copy, (d, w) -> {
+                .setNegativeButton(R.string.doctor_btn_copy, (d, w) -> {
                     ClipboardManager cm = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
                     if (cm != null) {
                         cm.setPrimaryClip(ClipData.newPlainText("Extro Doctor", report));
                         Toast.makeText(context, R.string.doctor_copied_toast, Toast.LENGTH_SHORT).show();
                     }
+                })
+                .setNeutralButton(R.string.doctor_btn_clear_cache, (d, w) -> {
+                    long freedBytes = TeamTalkApp.clearAppTempCaches(context);
+                    double freedMb = freedBytes / (1024.0 * 1024.0);
+                    String formattedMb = String.format(Locale.US, "%.2f", freedMb);
+                    Toast.makeText(context, context.getString(R.string.doctor_cache_cleared_toast, formattedMb),
+                            Toast.LENGTH_SHORT).show();
                 })
                 .show();
     }
@@ -70,7 +78,9 @@ public final class ExtroDiagnosticsHelper {
         sb.append("• ").append(context.getString(isTablet ? R.string.doctor_form_tablet : R.string.doctor_form_phone))
                 .append(" (").append(wDp).append("×").append(hDp)
                 .append(" dp, sw").append(swDp).append("dp, grid ").append(gridCols).append(" col)\n");
-        sb.append("• ABI: ").append(abis).append("\n\n");
+        double cacheMb = TeamTalkApp.calculateCacheSizeBytes(context) / (1024.0 * 1024.0);
+        sb.append("• ABI: ").append(abis).append("\n");
+        sb.append("• ").append(context.getString(R.string.doctor_cache_size, String.format(Locale.US, "%.2f", cacheMb))).append("\n\n");
 
         // Network & Active Server
         sb.append("🌐 ").append(context.getString(R.string.doctor_section_network)).append("\n");

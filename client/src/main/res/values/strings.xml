@@ -2009,4 +2009,7 @@ By: %3$s"</string>
     <string name="doctor_form_tablet">Tablet / Large Screen</string>
     <string name="doctor_form_phone">Smartphone</string>
     <string name="doctor_not_connected">Not connected</string>
+    <string name="doctor_cache_size">App cache: %1$s MB</string>
+    <string name="doctor_btn_clear_cache">🧹 Clear Cache</string>
+    <string name="doctor_cache_cleared_toast">Cache cleared: freed %1$s MB</string>
 </resources>

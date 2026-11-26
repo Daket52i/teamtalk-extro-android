@@ -5,14 +5,31 @@ on:
     branches: [ main, master ]
     tags:
       - 'v*'
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional release tag (e.g. v5.37.0). Leave empty to use version from client/build.gradle'
+        required: false
+        type: string
+        default: ''
+      publish_release:
+        description: 'Publish APKs to GitHub Releases'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build & Release Android APK
+    name: Test, Build & Release Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -36,11 +53,21 @@ jobs:
 
       - name: Compute version
         run: |
+          TARGET_TAG=""
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            TAG_VER="${GITHUB_REF_NAME#v}"
+            TARGET_TAG="${GITHUB_REF_NAME}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${{ inputs.release_tag }}" ]]; then
+            TARGET_TAG="${{ inputs.release_tag }}"
+            if [[ "${TARGET_TAG}" != v* ]]; then
+              TARGET_TAG="v${TARGET_TAG}"
+            fi
+          fi
+
+          if [[ -n "${TARGET_TAG}" ]]; then
+            TAG_VER="${TARGET_TAG#v}"
             sed -i -E "s/versionName = '[^']+'/versionName = '${TAG_VER}'/" client/build.gradle
             MAJOR_NUM=$(echo "$TAG_VER" | awk -F. '{print ($1 != "" ? $1 : 5)}')
-            MINOR_NUM=$(echo "$TAG_VER" | awk -F. '{print ($2 != "" ? $2 : 31)}')
+            MINOR_NUM=$(echo "$TAG_VER" | awk -F. '{print ($2 != "" ? $2 : 37)}')
             PATCH_NUM=$(echo "$TAG_VER" | awk -F. '{print ($3 != "" ? $3 : 0)}')
             VER_CODE=$(( (MAJOR_NUM - 5) * 10000 + (MINOR_NUM - 30) * 100 + PATCH_NUM + 500 ))
             if [ "$VER_CODE" -le 503 ]; then
@@ -48,12 +75,19 @@ jobs:
             fi
             sed -i -E "s/versionCode = [0-9]+/versionCode = ${VER_CODE}/" client/build.gradle
           fi
+
           VERSION_NAME=$(grep -m1 'versionName' client/build.gradle | sed -E "s/.*['\"]([^'\"]+)['\"].*/\1/" | tr -d '[:space:]')
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
-          echo "RELEASE_TAG=v$VERSION_NAME" >> $GITHUB_ENV
+          echo "RELEASE_TAG=${TARGET_TAG:-v$VERSION_NAME}" >> $GITHUB_ENV
 
       - name: Grant execute permission for gradlew
         run: chmod +x client/gradlew
+
+      - name: Run Unit Tests
+        working-directory: client
+        run: |
+          ./gradlew testDebugUnitTest --no-daemon --stacktrace 2>&1 | tee ../gradle_test.log
+          test ${PIPESTATUS[0]} -eq 0
 
       - name: Build APKs
         working-directory: client
@@ -62,12 +96,14 @@ jobs:
           test ${PIPESTATUS[0]} -eq 0
 
       - name: Upload Failure Log to Release
-        if: failure()
+        if: failure() && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-failure-log
           name: "Build Failure Log"
-          files: gradle_err.log
+          files: |
+            gradle_test.log
+            gradle_err.log
           overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -80,9 +116,11 @@ jobs:
           path: |
             **/build/reports/
             **/build/outputs/logs/
+            gradle_test.log
+            gradle_err.log
           if-no-files-found: ignore
 
-      - name: Brand APK names
+      - name: Brand APK names & Generate SHA256SUMS
         run: |
           mkdir -p dist
           for f in client/build/outputs/apk/release/*.apk client/build/outputs/apk/debug/*.apk; do
@@ -91,32 +129,59 @@ jobs:
             newname=$(echo "$base" | sed "s/^TeamTalkAndroid/TeamTalkExtro-${VERSION_NAME}/")
             cp "$f" "dist/$newname"
           done
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
           ls -la dist
+          cat dist/SHA256SUMS.txt
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
-          name: TeamTalkExtro-APK
-          path: dist/*.apk
+          name: TeamTalkExtro-${{ env.VERSION_NAME }}-APKs
+          path: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
+          retention-days: 30
           if-no-files-found: warn
 
       - name: Archive Source Code
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
         run: |
           git archive --format=zip --output=TeamTalkExtro-${RELEASE_TAG}-source.zip HEAD
 
-      - name: Create GitHub Release
+      - name: Create Versioned GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', env.VERSION_NAME) }}
-          name: "TeamTalk Extro ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', env.VERSION_NAME) }}"
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "TeamTalk Extro ${{ env.RELEASE_TAG }}"
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
+          overwrite: true
           files: |
             dist/*.apk
+            dist/SHA256SUMS.txt
             tests/output/*.jar
             TeamTalkExtro-*-source.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Rolling latest-main Prerelease
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        with:
+          tag_name: latest-main
+          name: "TeamTalk Extro Latest (main — v${{ env.VERSION_NAME }})"
+          body: |
+            Автоматическая сборка ветки `main` (**v${{ env.VERSION_NAME }}**, коммит `${{ github.sha }}`).
+
+            Прошли все модульные тесты (`testDebugUnitTest`), собраны и подписаны релизные APK + контрольные суммы `SHA256SUMS.txt`.
+          draft: false
+          prerelease: true
+          overwrite: true
+          files: |
+            dist/*-release.apk
+            dist/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

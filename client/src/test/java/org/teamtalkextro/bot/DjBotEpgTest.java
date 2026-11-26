@@ -96,9 +96,9 @@ public class DjBotEpgTest {
 
     @Test
     public void testCatalogCountsAndIntegrity() {
-        assertEquals(33, DjBotCatalogs.BUILT_IN_TV.size());
+        assertEquals(40, DjBotCatalogs.BUILT_IN_TV.size());
         assertEquals("Первый канал", DjBotCatalogs.BUILT_IN_TV.get(0).title);
-        assertEquals("Бобёр", DjBotCatalogs.BUILT_IN_TV.get(32).title);
+        assertEquals("Красная линия", DjBotCatalogs.BUILT_IN_TV.get(39).title);
         assertTrue(DjBotCatalogs.BUILT_IN_RADIO.size() >= 30);
         assertTrue(DjBotCatalogs.BUILT_IN_VOLNOREZ.size() >= 50);
         assertTrue(DjBotCatalogs.POP_QUERIES.size() >= 15);

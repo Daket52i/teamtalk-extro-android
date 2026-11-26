@@ -702,8 +702,10 @@ public final class EmbeddedMediaBot {
                         refreshCurrentTvEpg(false);
                     }
 
+                    boolean activeBotWork = streamer.isRunning() || state == State.CONNECTING || !initialLoginDone;
+                    int pollTimeoutMs = activeBotWork ? 40 : 120;
                     TTMessage msg = new TTMessage();
-                    if (!client.getMessage(msg, 40)) {
+                    if (!client.getMessage(msg, pollTimeoutMs)) {
                         continue;
                     }
 
@@ -1543,6 +1545,13 @@ public final class EmbeddedMediaBot {
             reply(fromUserId, replyToChannel, formatPagedCatalog("📺 ТВ-каналы", "/tv", DjBotCatalogs.BUILT_IN_TV, page));
             return;
         }
+        String trimmedArg = arg.trim();
+        if (trimmedArg.startsWith("http://") || trimmedArg.startsWith("https://")) {
+            BotMusicSearch.BotTrack customTv = new BotMusicSearch.BotTrack(
+                    "IPTV-поток", "ТВ", trimmedArg, DjBotCatalogs.SERVICE_TV, true, null, null);
+            startTvTrack(customTv, fromUserId, replyToChannel, false);
+            return;
+        }
         List<BotMusicSearch.BotTrack> found = DjBotCatalogs.searchTv(arg);
         if (found.isEmpty()) {
             reply(fromUserId, replyToChannel, "ТВ-канал не найден: " + arg);
@@ -1552,17 +1561,52 @@ public final class EmbeddedMediaBot {
     }
 
     private void startTvTrack(BotMusicSearch.BotTrack channel, int fromUserId, boolean replyToChannel, boolean fromUi) {
-        appendLog("📺 Проверка ТВ-потока: " + channel.title);
-        String blockedReason = DjBotCatalogs.probeTvUrlBlocked(channel.url);
-        if (blockedReason != null) {
-            String err = "⚠️ ТВ «" + channel.title + "» недоступен: " + blockedReason;
+        List<String> candidates = channel.getAllCandidateUrls();
+        if (candidates.isEmpty()) {
+            String err = "⚠️ ТВ «" + channel.title + "» недоступен: пустая ссылка";
             appendLog(err);
             if (!fromUi && fromUserId > 0) {
                 reply(fromUserId, replyToChannel, err);
             }
             return;
         }
-        startTrack(channel, fromUi);
+
+        appendLog("📺 Проверка ТВ-потока: " + channel.title
+                + (candidates.size() > 1 ? (" (зеркал: " + candidates.size() + ")") : ""));
+        int workingIdx = -1;
+        String lastBlockedReason = null;
+        for (int i = 0; i < candidates.size(); i++) {
+            String candUrl = candidates.get(i);
+            String reason = DjBotCatalogs.probeTvUrlBlocked(candUrl);
+            if (reason == null) {
+                workingIdx = i;
+                if (i > 0) {
+                    appendLog("📺 Выбрано рабочее зеркало #" + (i + 1) + " для «" + channel.title + "»");
+                }
+                break;
+            }
+            lastBlockedReason = reason;
+            if (candidates.size() > 1 && i + 1 < candidates.size()) {
+                appendLog("📺 Зеркало #" + (i + 1) + " недоступно (" + reason + "), проверяю следующее…");
+            }
+        }
+
+        if (workingIdx < 0) {
+            String err = "⚠️ ТВ «" + channel.title + "» недоступен: "
+                    + (lastBlockedReason != null ? lastBlockedReason : "поток не отвечает");
+            appendLog(err);
+            if (!fromUi && fromUserId > 0) {
+                reply(fromUserId, replyToChannel, err);
+            }
+            return;
+        }
+
+        List<String> orderedMirrors = new ArrayList<>();
+        for (int i = workingIdx; i < candidates.size(); i++) {
+            orderedMirrors.add(candidates.get(i));
+        }
+        BotMusicSearch.BotTrack effectiveTrack = channel.withCandidateOrder(orderedMirrors);
+        startTrack(effectiveTrack, fromUi);
         lastEpgTickMs = SystemClock.uptimeMillis();
         DjBotEpg.EpgInfo epgInfo = refreshCurrentTvEpg(false);
         if (!fromUi && fromUserId > 0) {

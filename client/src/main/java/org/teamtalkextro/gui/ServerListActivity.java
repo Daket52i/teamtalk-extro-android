@@ -322,6 +322,8 @@ public class ServerListActivity extends AppCompatActivity
 
     private void setupRecyclerView() {
         adapter = new ServerListAdapter();
+        recyclerView.setHasFixedSize(true);
+        recyclerView.setItemViewCacheSize(20);
         applyResponsiveServerLayout();
         recyclerView.setAdapter(adapter);
         recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
