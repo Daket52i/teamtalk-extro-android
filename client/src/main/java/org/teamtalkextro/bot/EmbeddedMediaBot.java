@@ -2,11 +2,15 @@ package org.teamtalkextro.bot;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.text.TextUtils;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
+import dk.bearware.BanType;
 import dk.bearware.Channel;
 import dk.bearware.ClientEvent;
 import dk.bearware.EncryptionContext;
@@ -17,6 +21,7 @@ import dk.bearware.TeamTalkBase;
 import dk.bearware.TextMessage;
 import dk.bearware.TextMsgType;
 import dk.bearware.User;
+import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -30,21 +35,39 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 import org.teamtalkextro.backend.ServerPeekHelper;
 
 /**
- * Standalone embedded Android TTMediaBot (inspired by Daket52i/TTMediaBot-by-dancho).
+ * Standalone embedded Android DJ Bot (analog of TT-DJbot / welcome, guard, music,
+ * radio, Volnorez, Russian Live TV + XMLTV EPG, favorites, and TTS /vo).
  *
- * Runs on an independent {@link TeamTalk5} instance inside {@link org.teamtalkextro.backend.TeamTalkService}
- * with zero interference with the user's own connection or microphone.
+ * Runs on an independent {@link TeamTalk5} instance inside
+ * {@link org.teamtalkextro.backend.TeamTalkService} with zero interference with
+ * the user's own connection or microphone.
  */
 public final class EmbeddedMediaBot {
 
-    private static final String TAG = "EmbeddedMediaBot";
-    private static final int MAX_LOG_LINES = 80;
+    private static final String TAG = "EmbeddedDjBot";
+    private static final int MAX_LOG_LINES = 100;
     private static final long RECONNECT_BACKOFF_MS = 5000L;
+    private static final int PAGE_SIZE = 15;
+    private static final long EPG_POLL_INTERVAL_MS = 60_000L;
+
+    public static final String[] DEFAULT_MAT_STEMS = {
+            "пизд", "хуй", "хуе", "хуя", "бля", "еба", "ебл", "ебн", "ебок",
+            "заеб", "наеб", "поеб", "говн", "гандон", "залуп", "шлюх", "дроч",
+            "манд", "мудак", "мудач", "пидор", "пидр", "сука", "суки", "суку",
+            "херн", "херо"
+    };
+
+    private static final Pattern BOTNET_WORD_RE =
+            Pattern.compile("[A-Za-z]{2,}_[A-Za-z0-9]{1,}(?:_[0-9]{1,})?");
 
     public enum State {
         STOPPED,
@@ -59,26 +82,35 @@ public final class EmbeddedMediaBot {
         public final String channelName;
         public final String nowPlaying;
         public final String liveStreamTitle;
+        public final String epgSummary;
+        public final int listenersCount;
         public final boolean playing;
         public final boolean paused;
         public final int volume;
         public final String activeService;
         public final int queueSize;
         public final String hostInfo;
+        public final boolean voiceAnnounce;
+        public final boolean guardEnabled;
 
         public Snapshot(State state, String channelName, String nowPlaying, String liveStreamTitle,
-                        boolean playing, boolean paused, int volume, String activeService,
-                        int queueSize, String hostInfo) {
+                        String epgSummary, int listenersCount, boolean playing, boolean paused,
+                        int volume, String activeService, int queueSize, String hostInfo,
+                        boolean voiceAnnounce, boolean guardEnabled) {
             this.state = state;
             this.channelName = channelName;
             this.nowPlaying = nowPlaying;
             this.liveStreamTitle = liveStreamTitle;
+            this.epgSummary = epgSummary;
+            this.listenersCount = listenersCount;
             this.playing = playing;
             this.paused = paused;
             this.volume = volume;
             this.activeService = activeService;
             this.queueSize = queueSize;
             this.hostInfo = hostInfo;
+            this.voiceAnnounce = voiceAnnounce;
+            this.guardEnabled = guardEnabled;
         }
     }
 
@@ -90,9 +122,10 @@ public final class EmbeddedMediaBot {
     private final Context appContext;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final BotAudioStreamer streamer;
+    private final DjBotEpg epg;
     private final CopyOnWriteArrayList<StateListener> listeners = new CopyOnWriteArrayList<>();
     private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "Extro-BotCmd");
+        Thread t = new Thread(r, "Extro-DjBotCmd");
         t.setDaemon(true);
         return t;
     });
@@ -104,6 +137,7 @@ public final class EmbeddedMediaBot {
     private List<BotMusicSearch.BotTrack> lastSearchResults = new ArrayList<>();
     private final Map<Integer, Channel> channelsMap = new HashMap<>();
     private final Map<Integer, User> usersMap = new HashMap<>();
+    private final Set<Integer> welcomedUserIds = new HashSet<>();
 
     private volatile boolean running = false;
     private volatile State state = State.STOPPED;
@@ -115,17 +149,109 @@ public final class EmbeddedMediaBot {
     private volatile String currentChannelName = "";
     private volatile BotMusicSearch.BotTrack currentTrack = null;
     private volatile String liveIcyTitle = "";
+    private volatile String currentEpgSummary = "";
+    private volatile int liveListeners = -1;
     private volatile String activeService = BotMusicSearch.SERVICE_HITMO;
     private volatile boolean selectMode = false;
     private volatile String targetChannelOverride = null;
     private volatile String targetChannelPassOverride = null;
+    private volatile long lastEpgTickMs = 0L;
+
+    // Lazy TTS synthesizer for /vo track voice announcements
+    private final Object ttsLock = new Object();
+    private TextToSpeech botTts;
+    private volatile boolean botTtsReady = false;
+    private final AtomicInteger voCounter = new AtomicInteger(0);
 
     public EmbeddedMediaBot(Context context) {
         this.appContext = context.getApplicationContext();
         this.streamer = new BotAudioStreamer(appContext);
         this.streamer.setOnTrackFinishedListener(this::onTrackFinished);
-        this.streamer.setOnMetadataListener(this::onIcyTitleChanged);
+        this.streamer.setOnMetadataListener(this::onLiveTitleChanged);
+        this.streamer.setOnListenersListener(this::onLiveListenersChanged);
+        this.epg = new DjBotEpg(appContext.getCacheDir(), this::appendLog);
     }
+
+    // --- Pure-Java Guard Evaluation (unit-testable) ---
+
+    /**
+     * Evaluates a user against DJ Bot Guard rules.
+     * Returns null if user is allowed, or a Russian violation reason if user should be kicked/banned.
+     */
+    public static String evaluateGuard(BotConfig cfg, String nickname, String username) {
+        if (cfg == null || !cfg.guardEnabled) {
+            return null;
+        }
+        if (cfg.isTrusted(username, nickname)) {
+            return null;
+        }
+        String nick = nickname != null ? nickname.trim() : "";
+        if (cfg.guardKickEmptyNick && nick.isEmpty()) {
+            return "пустой ник";
+        }
+        if (cfg.guardMaxNickLen > 0 && nick.length() > cfg.guardMaxNickLen) {
+            return "слишком длинный ник (" + nick.length() + " > " + cfg.guardMaxNickLen + ")";
+        }
+        if (cfg.guardMatCheck && containsProfanity(nick)) {
+            return "мат в нике";
+        }
+        if (cfg.guardBotnetNickCheck && isBotnetNick(nick)) {
+            return "ботнет-ник";
+        }
+        return null;
+    }
+
+    public static boolean containsProfanity(String text) {
+        if (text == null || text.trim().isEmpty()) return false;
+        String norm = text.toLowerCase(Locale.ROOT).replace('ё', 'е');
+        for (String stem : DEFAULT_MAT_STEMS) {
+            if (norm.contains(stem)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Botnet nick heuristic matching TT-DJbot:
+     * >= 2 underscores + Latin word_word pattern; if emoji present -> botnet,
+     * otherwise requires >= 3 underscores so normal nicks like "kirill_mobile" are safe.
+     */
+    public static boolean isBotnetNick(String nick) {
+        if (nick == null) return false;
+        String n = nick.trim();
+        if (n.isEmpty()) return false;
+        int underscores = 0;
+        for (int i = 0; i < n.length(); i++) {
+            if (n.charAt(i) == '_') underscores++;
+        }
+        if (underscores < 2) return false;
+        if (!BOTNET_WORD_RE.matcher(n).find()) return false;
+        if (containsEmoji(n)) return true;
+        return underscores >= 3;
+    }
+
+    private static boolean containsEmoji(String s) {
+        for (int i = 0; i < s.length(); ) {
+            int cp = s.codePointAt(i);
+            i += Character.charCount(cp);
+            if ((cp >= 0x1F000 && cp <= 0x1FAFF)
+                    || (cp >= 0x2600 && cp <= 0x27BF)
+                    || (cp >= 0x2B00 && cp <= 0x2BFF)
+                    || (cp >= 0x2190 && cp <= 0x21FF)
+                    || (cp >= 0x2300 && cp <= 0x23FF)
+                    || cp == 0xFE0F) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
+    }
+
+    // --- Listeners & State ---
 
     public void addStateListener(StateListener listener) {
         if (listener != null && !listeners.contains(listener)) {
@@ -151,35 +277,48 @@ public final class EmbeddedMediaBot {
         return this.activeConfig != null ? this.activeConfig.copy() : BotConfig.createDefault();
     }
 
+    public DjBotEpg getEpg() {
+        return this.epg;
+    }
+
     public Snapshot getSnapshot() {
         synchronized (stateLock) {
-            String host = activeConfig != null && !TextUtils.isEmpty(activeConfig.host)
+            String host = activeConfig != null && !isBlank(activeConfig.host)
                     ? (activeConfig.host + ":" + activeConfig.tcpPort) : "";
             String now = currentTrack != null ? currentTrack.getDisplayName() : "";
+            boolean vo = activeConfig != null && activeConfig.voiceAnnounceTrack;
+            boolean guard = activeConfig != null && activeConfig.guardEnabled;
             return new Snapshot(
                     state,
                     currentChannelName,
                     now,
                     liveIcyTitle,
+                    currentEpgSummary,
+                    liveListeners,
                     streamer.isPlaying(),
                     streamer.isPaused(),
                     streamer.getVolume(),
                     activeService,
                     queue.size(),
-                    host
+                    host,
+                    vo,
+                    guard
             );
         }
     }
 
     public String getNotificationSummary() {
         Snapshot s = getSnapshot();
-        if (!TextUtils.isEmpty(s.nowPlaying)) {
+        if (!isBlank(s.epgSummary)) {
+            return s.epgSummary;
+        }
+        if (!isBlank(s.nowPlaying)) {
             return "🎵 " + s.nowPlaying;
         }
-        if (s.state == State.IN_CHANNEL && !TextUtils.isEmpty(s.channelName)) {
+        if (s.state == State.IN_CHANNEL && !isBlank(s.channelName)) {
             return s.channelName;
         }
-        return !TextUtils.isEmpty(s.hostInfo) ? s.hostInfo : "TTMediaBot";
+        return !isBlank(s.hostInfo) ? s.hostInfo : "DJ Bot";
     }
 
     public List<String> getLogs() {
@@ -197,7 +336,7 @@ public final class EmbeddedMediaBot {
 
     public synchronized void start(BotConfig config) {
         stop();
-        if (config == null || TextUtils.isEmpty(config.host)) {
+        if (config == null || isBlank(config.host)) {
             appendLog("Ошибка: не указан адрес сервера");
             return;
         }
@@ -210,6 +349,8 @@ public final class EmbeddedMediaBot {
         this.targetChannelOverride = null;
         this.targetChannelPassOverride = null;
         this.liveIcyTitle = "";
+        this.currentEpgSummary = "";
+        this.liveListeners = -1;
         this.currentTrack = null;
         synchronized (stateLock) {
             this.queue.clear();
@@ -217,13 +358,16 @@ public final class EmbeddedMediaBot {
             this.lastSearchResults.clear();
             this.channelsMap.clear();
             this.usersMap.clear();
+            this.welcomedUserIds.clear();
         }
 
         this.running = true;
         setState(State.CONNECTING);
-        appendLog("Запуск бота «" + cfg.nickname + "» → " + cfg.host + ":" + cfg.tcpPort
-                + (cfg.encrypted ? " (TLS)" : ""));
-        this.botThread = new Thread(() -> runBotLoop(cfg), "Extro-MediaBot");
+        this.epg.ensureLoadedAsync();
+        appendLog("Запуск DJ Bot «" + cfg.nickname + "» → " + cfg.host + ":" + cfg.tcpPort
+                + (cfg.encrypted ? " (TLS)" : "")
+                + (cfg.guardEnabled ? " [Guard ВКЛ]" : ""));
+        this.botThread = new Thread(() -> runBotLoop(cfg), "Extro-DjBot");
         this.botThread.start();
     }
 
@@ -253,6 +397,8 @@ public final class EmbeddedMediaBot {
         this.currentChannelName = "";
         this.currentTrack = null;
         this.liveIcyTitle = "";
+        this.currentEpgSummary = "";
+        this.liveListeners = -1;
         this.myUserId = -1;
         setState(State.STOPPED);
     }
@@ -261,6 +407,9 @@ public final class EmbeddedMediaBot {
 
     public void setService(String service) {
         this.activeService = BotMusicSearch.normalizeService(service);
+        if (this.activeConfig != null) {
+            this.activeConfig.defaultService = this.activeService;
+        }
         appendLog("Сервис поиска: " + BotMusicSearch.getServiceLabel(this.activeService));
         notifyStateChanged();
     }
@@ -286,6 +435,8 @@ public final class EmbeddedMediaBot {
         streamer.stop();
         this.currentTrack = null;
         this.liveIcyTitle = "";
+        this.currentEpgSummary = "";
+        this.liveListeners = -1;
         updateBotStatus("");
         appendLog("Воспроизведение остановлено");
         notifyStateChanged();
@@ -294,11 +445,7 @@ public final class EmbeddedMediaBot {
     public void nextTrack() {
         BotMusicSearch.BotTrack next;
         synchronized (stateLock) {
-            if (queue.isEmpty()) {
-                next = null;
-            } else {
-                next = queue.remove(0);
-            }
+            next = queue.isEmpty() ? null : queue.remove(0);
         }
         if (next != null) {
             startTrack(next, true);
@@ -313,7 +460,6 @@ public final class EmbeddedMediaBot {
             if (history.size() < 2) {
                 prev = history.isEmpty() ? null : history.get(history.size() - 1);
             } else {
-                // history tail is current track; pop it and grab previous
                 history.remove(history.size() - 1);
                 prev = history.remove(history.size() - 1);
             }
@@ -331,7 +477,7 @@ public final class EmbeddedMediaBot {
     }
 
     public void playQueryFromUi(String service, String query) {
-        if (TextUtils.isEmpty(query)) return;
+        if (isBlank(query)) return;
         final String svc = BotMusicSearch.normalizeService(service);
         this.activeService = svc;
         notifyStateChanged();
@@ -353,13 +499,36 @@ public final class EmbeddedMediaBot {
         });
     }
 
+    public void playTrackDirectFromUi(BotMusicSearch.BotTrack track) {
+        if (track == null) return;
+        commandExecutor.execute(() -> {
+            if (DjBotCatalogs.SERVICE_TV.equals(track.service)) {
+                startTvTrack(track, -1, false, true);
+            } else {
+                startTrack(track, true);
+            }
+        });
+    }
+
+    public void playRandomPopFromUi() {
+        commandExecutor.execute(() -> {
+            appendLog("🎲 Подбор случайного хита (/pop)…");
+            try {
+                BotMusicSearch.BotTrack track = BotMusicSearch.searchRandomPop();
+                startTrack(track, true);
+            } catch (Throwable t) {
+                appendLog("Ошибка /pop: " + t.getMessage());
+            }
+        });
+    }
+
     public void playLocalFileFromUi(Uri uri, String displayName) {
         if (uri == null) return;
-        String name = !TextUtils.isEmpty(displayName) ? displayName : uri.getLastPathSegment();
-        if (TextUtils.isEmpty(name)) name = "Локальный трек";
+        String name = !isBlank(displayName) ? displayName : uri.getLastPathSegment();
+        if (isBlank(name)) name = "Локальный трек";
         BotMusicSearch.BotTrack track = new BotMusicSearch.BotTrack(
                 name, "Телефон", uri.toString(), "local", false, uri.toString(), null);
-        startTrack(track, true);
+        commandExecutor.execute(() -> startTrack(track, true));
     }
 
     // --- Main TeamTalk5 Bot Event Loop ---
@@ -391,28 +560,40 @@ public final class EmbeddedMediaBot {
                 }
 
                 boolean loggedIn = false;
+                boolean initialLoginDone = false;
                 boolean joinSent = false;
                 long loggedInAt = 0L;
                 int loginCmdId = -1;
                 boolean connectionBroken = false;
+                synchronized (stateLock) {
+                    welcomedUserIds.clear();
+                }
 
                 while (this.running && !connectionBroken) {
-                    // Fallback join if CMD_SUCCESS didn't arrive within 1200ms after MYSELF_LOGGEDIN
-                    if (loggedIn && !joinSent && (SystemClock.uptimeMillis() - loggedInAt >= 1200L)) {
+                    long nowUp = SystemClock.uptimeMillis();
+                    if (loggedIn && !joinSent && (nowUp - loggedInAt >= 1200L)) {
                         joinSent = true;
-                        joinConfiguredChannel(client, cfg);
+                        initialLoginDone = true;
+                        joinConfiguredChannel(client, activeConfig != null ? activeConfig : cfg);
                     }
 
-                    // Fresh TTMessage on every poll (prevents stale JNI fields)
+                    // Periodic EPG status refresh while TV is playing
+                    if (currentTrack != null && DjBotCatalogs.SERVICE_TV.equals(currentTrack.service)
+                            && (nowUp - lastEpgTickMs >= EPG_POLL_INTERVAL_MS)) {
+                        lastEpgTickMs = nowUp;
+                        refreshCurrentTvEpg(false);
+                    }
+
                     TTMessage msg = new TTMessage();
                     if (!client.getMessage(msg, 40)) {
                         continue;
                     }
 
+                    BotConfig liveCfg = activeConfig != null ? activeConfig : cfg;
                     switch (msg.nClientEvent) {
                         case ClientEvent.CLIENTEVENT_CON_SUCCESS:
                             appendLog("TCP-соединение установлено, выполняем вход…");
-                            loginCmdId = client.doLoginEx(cfg.nickname, cfg.username, cfg.password, "TTMediaBot Extro");
+                            loginCmdId = client.doLoginEx(liveCfg.nickname, liveCfg.username, liveCfg.password, "DJ Bot Extro");
                             if (loginCmdId <= 0) {
                                 appendLog("Ошибка вызова doLoginEx");
                                 connectionBroken = true;
@@ -436,7 +617,7 @@ public final class EmbeddedMediaBot {
 
                         case ClientEvent.CLIENTEVENT_CMD_ERROR: {
                             int errNo = msg.clienterrormsg != null ? msg.clienterrormsg.nErrorNo : 0;
-                            String errText = msg.clienterrormsg != null && !TextUtils.isEmpty(msg.clienterrormsg.szErrorMsg)
+                            String errText = msg.clienterrormsg != null && !isBlank(msg.clienterrormsg.szErrorMsg)
                                     ? msg.clienterrormsg.szErrorMsg
                                     : (errNo != 0 ? TeamTalkBase.getErrorMessage(errNo) : "Unknown error");
                             appendLog("Ошибка команды (#" + errNo + "): " + errText);
@@ -457,8 +638,9 @@ public final class EmbeddedMediaBot {
                         case ClientEvent.CLIENTEVENT_CMD_SUCCESS:
                             if (loginCmdId > 0 && msg.nSource == loginCmdId && !joinSent) {
                                 joinSent = true;
+                                initialLoginDone = true;
                                 refreshNativeCaches(client);
-                                joinConfiguredChannel(client, cfg);
+                                joinConfiguredChannel(client, liveCfg);
                             }
                             break;
 
@@ -480,10 +662,28 @@ public final class EmbeddedMediaBot {
                             break;
 
                         case ClientEvent.CLIENTEVENT_CMD_USER_LOGGEDIN:
+                            if (msg.user != null && msg.user.nUserID > 0) {
+                                User u = copyUser(msg.user);
+                                synchronized (stateLock) {
+                                    usersMap.put(u.nUserID, u);
+                                }
+                                if (initialLoginDone && u.nUserID != myUserId) {
+                                    boolean violated = enforceGuardIfNeeded(client, liveCfg, u);
+                                    if (!violated) {
+                                        maybeSendWelcome(liveCfg, u);
+                                    }
+                                }
+                            }
+                            break;
+
                         case ClientEvent.CLIENTEVENT_CMD_USER_UPDATE:
                             if (msg.user != null && msg.user.nUserID > 0) {
+                                User u = copyUser(msg.user);
                                 synchronized (stateLock) {
-                                    usersMap.put(msg.user.nUserID, copyUser(msg.user));
+                                    usersMap.put(u.nUserID, u);
+                                }
+                                if (initialLoginDone && u.nUserID != myUserId) {
+                                    enforceGuardIfNeeded(client, liveCfg, u);
                                 }
                             }
                             break;
@@ -492,6 +692,7 @@ public final class EmbeddedMediaBot {
                             if (msg.user != null) {
                                 synchronized (stateLock) {
                                     usersMap.remove(msg.user.nUserID);
+                                    welcomedUserIds.remove(msg.user.nUserID);
                                 }
                             }
                             break;
@@ -506,12 +707,12 @@ public final class EmbeddedMediaBot {
                                     currentChannelId = u.nChannelID;
                                     currentChannelName = resolveChannelDisplayPath(client, u.nChannelID);
                                     setState(State.IN_CHANNEL);
-                                    appendLog("Бот вошёл в канал: " + currentChannelName + " (ID " + currentChannelId + ")");
-                                } else if (currentChannelId > 0 && u.nChannelID == currentChannelId
-                                        && !TextUtils.isEmpty(cfg.welcomeMessage)) {
-                                    String welcome = cfg.welcomeMessage.replace("{user}",
-                                            !TextUtils.isEmpty(u.szNickname) ? u.szNickname : u.szUsername);
-                                    sendPrivateMessage(u.nUserID, welcome);
+                                    appendLog("DJ Bot вошёл в канал: " + currentChannelName + " (ID " + currentChannelId + ")");
+                                } else if (initialLoginDone && currentChannelId > 0 && u.nChannelID == currentChannelId) {
+                                    boolean violated = enforceGuardIfNeeded(client, liveCfg, u);
+                                    if (!violated) {
+                                        maybeSendWelcome(liveCfg, u);
+                                    }
                                 }
                             }
                             break;
@@ -531,7 +732,7 @@ public final class EmbeddedMediaBot {
                             break;
 
                         case ClientEvent.CLIENTEVENT_CMD_MYSELF_KICKED:
-                            appendLog("Бот был кикнут из канала");
+                            appendLog("DJ Bot был кикнут из канала");
                             currentChannelId = 0;
                             currentChannelName = "";
                             streamer.stop();
@@ -540,7 +741,7 @@ public final class EmbeddedMediaBot {
 
                         case ClientEvent.CLIENTEVENT_CMD_USER_TEXTMSG:
                             if (msg.textmessage != null) {
-                                handleIncomingTextMessage(msg.textmessage, cfg);
+                                handleIncomingTextMessage(msg.textmessage, liveCfg);
                             }
                             break;
 
@@ -549,8 +750,8 @@ public final class EmbeddedMediaBot {
                     }
                 }
             } catch (Throwable t) {
-                Log.e(TAG, "Bot loop exception", t);
-                appendLog("Сбой цикла бота: " + t.getMessage());
+                Log.e(TAG, "DJ Bot loop exception", t);
+                appendLog("Сбой цикла DJ Bot: " + t.getMessage());
             } finally {
                 streamer.stop();
                 streamer.setBotClient(null);
@@ -574,6 +775,65 @@ public final class EmbeddedMediaBot {
             }
         }
         setState(State.STOPPED);
+    }
+
+    private boolean enforceGuardIfNeeded(TeamTalkBase client, BotConfig cfg, User u) {
+        if (client == null || cfg == null || u == null || u.nUserID <= 0 || u.nUserID == myUserId) {
+            return false;
+        }
+        String reason = evaluateGuard(cfg, u.szNickname, u.szUsername);
+        if (reason == null) {
+            return false;
+        }
+        String who = !isBlank(u.szNickname) ? u.szNickname : (!isBlank(u.szUsername) ? u.szUsername : ("#" + u.nUserID));
+        if (cfg.guardBanOnViolation) {
+            try {
+                client.doBanUserEx(u.nUserID, BanType.BANTYPE_IPADDR);
+            } catch (Throwable ignored) {
+            }
+            try {
+                client.doKickUser(u.nUserID, 0);
+            } catch (Throwable ignored) {
+            }
+            String note = "🛡️ Guard БАН: «" + who + "» (логин: " + u.szUsername + ") — " + reason;
+            appendLog(note);
+            if (cfg.sendChannelAnnouncements && currentChannelId > 0) {
+                sendChannelMessage(note);
+            }
+        } else {
+            try {
+                client.doKickUser(u.nUserID, 0);
+            } catch (Throwable ignored) {
+            }
+            String note = "🛡️ Guard КИК: «" + who + "» (логин: " + u.szUsername + ") — " + reason;
+            appendLog(note);
+            if (cfg.sendChannelAnnouncements && currentChannelId > 0) {
+                sendChannelMessage(note);
+            }
+        }
+        return true;
+    }
+
+    private void maybeSendWelcome(BotConfig cfg, User u) {
+        if (cfg == null || u == null || !cfg.welcomeEnabled || isBlank(cfg.welcomeText)) {
+            return;
+        }
+        if (u.nUserID <= 0 || u.nUserID == myUserId) {
+            return;
+        }
+        if (cfg.isTrusted(u.szUsername, u.szNickname)) {
+            return;
+        }
+        boolean shouldSend;
+        synchronized (stateLock) {
+            shouldSend = welcomedUserIds.add(u.nUserID);
+        }
+        if (!shouldSend) return;
+
+        String name = !isBlank(u.szNickname) ? u.szNickname : (!isBlank(u.szUsername) ? u.szUsername : "гость");
+        String text = cfg.welcomeText.replace("{user}", name);
+        sendPrivateMessage(u.nUserID, text);
+        appendLog("👋 Приветствие отправлено: " + name);
     }
 
     private void sleepReconnect() {
@@ -610,19 +870,19 @@ public final class EmbeddedMediaBot {
     }
 
     private void joinConfiguredChannel(TeamTalkBase client, BotConfig cfg) {
-        String target = !TextUtils.isEmpty(targetChannelOverride) ? targetChannelOverride : cfg.channel;
+        String target = !isBlank(targetChannelOverride) ? targetChannelOverride : cfg.channel;
         String pass = targetChannelPassOverride != null ? targetChannelPassOverride : cfg.channelPassword;
         int chId = resolveChannelId(client, target);
         if (chId <= 0) {
             chId = client.getRootChannelID();
             if (chId <= 0) chId = 1;
         }
-        appendLog("Вход в канал «" + (TextUtils.isEmpty(target) ? "/" : target) + "» (ID " + chId + ")…");
+        appendLog("Вход в канал «" + (isBlank(target) ? "/" : target) + "» (ID " + chId + ")…");
         client.doJoinChannelByID(chId, pass != null ? pass : "");
     }
 
     private int resolveChannelId(TeamTalkBase client, String spec) {
-        if (TextUtils.isEmpty(spec) || "/".equals(spec.trim())) {
+        if (isBlank(spec) || "/".equals(spec.trim())) {
             int root = client.getRootChannelID();
             return root > 0 ? root : 1;
         }
@@ -641,7 +901,6 @@ public final class EmbeddedMediaBot {
             if (id > 0) return id;
         }
 
-        // Case-insensitive match against collected channels map (by full path or leaf name)
         String lowTarget = withSlash.replaceAll("/+$", "").toLowerCase(Locale.ROOT);
         String lowLeaf = trimmed.replaceAll("^/+|/+$", "").toLowerCase(Locale.ROOT);
         synchronized (stateLock) {
@@ -663,7 +922,7 @@ public final class EmbeddedMediaBot {
     private String resolveChannelDisplayPath(TeamTalkBase client, int chId) {
         try {
             String p = client.getChannelPath(chId);
-            if (!TextUtils.isEmpty(p)) return p;
+            if (!isBlank(p)) return p;
         } catch (Throwable ignored) {
         }
         synchronized (stateLock) {
@@ -673,10 +932,10 @@ public final class EmbeddedMediaBot {
         return "#" + chId;
     }
 
-    // --- TTMediaBot-by-dancho Command Engine ---
+    // --- Full TT-DJbot Command Engine ---
 
     private void handleIncomingTextMessage(TextMessage tm, BotConfig cfg) {
-        if (tm == null || TextUtils.isEmpty(tm.szMessage)) return;
+        if (tm == null || isBlank(tm.szMessage)) return;
         if (tm.nFromUserID == myUserId) return;
 
         final boolean isPrivate = tm.nMsgType == TextMsgType.MSGTYPE_USER;
@@ -688,7 +947,6 @@ public final class EmbeddedMediaBot {
         final String raw = tm.szMessage.trim();
         if (raw.isEmpty()) return;
 
-        // Parse command (accept both "p ..." and "/p ...")
         String clean = raw.startsWith("/") ? raw.substring(1).trim() : raw;
         if (clean.isEmpty()) return;
 
@@ -696,7 +954,6 @@ public final class EmbeddedMediaBot {
         final String cmd = parts[0].toLowerCase(Locale.ROOT);
         final String arg = parts.length > 1 ? parts[1].trim() : "";
 
-        // For channel messages, only react to recognized bot commands so normal chat isn't spammed
         if (!isKnownCommand(cmd)) {
             return;
         }
@@ -705,42 +962,53 @@ public final class EmbeddedMediaBot {
         final String fromUsername = tm.szFromUsername != null ? tm.szFromUsername : "";
         final boolean replyToChannel = isChannel;
 
-        appendLog("Команда от " + (!TextUtils.isEmpty(fromUsername) ? fromUsername : ("#" + fromUserId))
+        appendLog("Команда от " + (!isBlank(fromUsername) ? fromUsername : ("#" + fromUserId))
                 + (isChannel ? " [канал]" : " [ЛС]") + ": " + raw);
 
-        commandExecutor.execute(() -> executeCommand(cmd, arg, fromUserId, fromUsername, replyToChannel, cfg));
+        commandExecutor.execute(() -> executeCommand(cmd, arg, fromUserId, fromUsername, replyToChannel));
     }
 
-    private static boolean isKnownCommand(String cmd) {
+    public static boolean isKnownCommand(String cmd) {
+        if (cmd == null) return false;
         switch (cmd) {
             case "p":
             case "play":
-            case "sr":
-            case "sl":
-            case "sv":
-            case "r":
-            case "radio":
             case "s":
             case "stop":
-            case "sp":
-            case "pause":
             case "n":
             case "next":
             case "skip":
+            case "sp":
+            case "pause":
             case "b":
             case "prev":
-            case "q":
-            case "queue":
-            case "c":
-            case "clear":
             case "v":
             case "vol":
             case "sf":
             case "sb":
+            case "q":
+            case "queue":
+            case "playlist":
+            case "c":
+            case "clear":
+            case "r":
+            case "radio":
+            case "voln":
             case "now":
             case "cg":
+            case "tv":
+            case "pop":
+            case "sv":
+            case "fav":
+            case "f":
+            case "vo":
+            case "welcome":
+            case "settings":
+            case "set":
             case "j":
             case "st":
+            case "sr":
+            case "sl":
             case "h":
             case "help":
                 return true;
@@ -749,33 +1017,34 @@ public final class EmbeddedMediaBot {
         }
     }
 
-    private void executeCommand(String cmd, String arg, int fromUserId, String fromUsername,
-                                boolean replyToChannel, BotConfig cfg) {
+    private void executeCommand(String cmd, String arg, int fromUserId, String fromUsername, boolean replyToChannel) {
+        BotConfig cfg = this.activeConfig != null ? this.activeConfig : BotConfig.createDefault();
         switch (cmd) {
             case "h":
             case "help":
                 reply(fromUserId, replyToChannel,
-                        "Команды TTMediaBot Extro:\n"
-                        + "p [запрос/URL] — найти и включить (или пауза)\n"
-                        + "sr — режим выбора из списка (sl <№>)\n"
-                        + "sv [hitmo|mf|rt|radio] — сменить сервис (сейчас: " + activeService + ")\n"
-                        + "r [№/запрос] — радиостанции\n"
-                        + "sp — пауза/продолжить | s — стоп\n"
-                        + "n — следующий | b — предыдущий\n"
-                        + "q — очередь | c — очистить очередь\n"
-                        + "v [0-100] — громкость | sf/sb <сек> — перемотка\n"
-                        + "now / cg — что играет\n"
-                        + "j <канал> — перейти в канал | st <текст> — статус");
+                        "🎧 Команды DJ Bot Extro (работают с / и без /):\n"
+                        + "/play <запрос|URL> (p) — найти и включить\n"
+                        + "/stop (s) | /skip (n) | /pause (sp) | /v <0-100>\n"
+                        + "/sf <сек> | /sb <сек> — перемотка | /playlist (q) — очередь\n"
+                        + "/radio [l <стр> | <№> | <поиск>] (r) — FM-радиостанции\n"
+                        + "/voln [l <стр> | <№> | <поиск>] — живые станции Волнореза\n"
+                        + "/tv [l <стр> | <№> | <поиск> | epg | stop] — ТВ-каналы + EPG\n"
+                        + "/now — что сейчас в эфире (трек / ICY / Волнорез / ТВ EPG)\n"
+                        + "/pop — случайный популярный русский хит\n"
+                        + "/sv [hitmo|mf|rt] — сервис музыки (сейчас: " + activeService + ")\n"
+                        + "/fav [+ | - <№> | <№>] — избранное | /vo — озвучка треков\n"
+                        + "Админам: /welcome <текст>, /settings, /set <ключ> <знач>, /j <канал>");
                 break;
 
             case "p":
             case "play":
-                if (TextUtils.isEmpty(arg)) {
+                if (isBlank(arg)) {
                     if (streamer.isRunning()) {
                         togglePause();
                         reply(fromUserId, replyToChannel, streamer.isPaused() ? "⏸ Пауза" : "▶ Продолжено");
                     } else {
-                        reply(fromUserId, replyToChannel, "Укажите запрос или ссылку: p <песня>");
+                        reply(fromUserId, replyToChannel, "Укажите запрос или ссылку: /play <песня>");
                     }
                     return;
                 }
@@ -789,15 +1058,14 @@ public final class EmbeddedMediaBot {
                         lastSearchResults = new ArrayList<>(found);
                     }
                     if (selectMode && !BotMusicSearch.isDirectUrl(arg) && found.size() > 1) {
-                        StringBuilder sb = new StringBuilder("Результаты (" + activeService + "), выберите sl <№>:\n");
+                        StringBuilder sb = new StringBuilder("Результаты (" + activeService + "), выберите /sl <№>:\n");
                         int lim = Math.min(found.size(), 10);
                         for (int i = 0; i < lim; i++) {
                             sb.append(i + 1).append(". ").append(found.get(i).getDisplayName()).append("\n");
                         }
                         reply(fromUserId, replyToChannel, sb.toString().trim());
                     } else {
-                        BotMusicSearch.BotTrack chosen = found.get(0);
-                        enqueueOrPlay(chosen, fromUserId, replyToChannel);
+                        enqueueOrPlay(found.get(0), fromUserId, replyToChannel);
                     }
                 } catch (Throwable t) {
                     reply(fromUserId, replyToChannel, "Ошибка поиска: " + t.getMessage());
@@ -807,7 +1075,7 @@ public final class EmbeddedMediaBot {
             case "sr":
                 selectMode = !selectMode;
                 reply(fromUserId, replyToChannel, selectMode
-                        ? "Режим выбора результатов (sr) ВКЛ — после p <запрос> выбирайте через sl <№>"
+                        ? "Режим выбора результатов (sr) ВКЛ — после /play выбирайте /sl <№>"
                         : "Режим выбора результатов (sr) ВЫКЛ — сразу играет первый трек");
                 break;
 
@@ -816,7 +1084,7 @@ public final class EmbeddedMediaBot {
                 try {
                     idx = Integer.parseInt(arg);
                 } catch (NumberFormatException e) {
-                    reply(fromUserId, replyToChannel, "Использование: sl <номер>");
+                    reply(fromUserId, replyToChannel, "Использование: /sl <номер>");
                     return;
                 }
                 BotMusicSearch.BotTrack picked = null;
@@ -834,40 +1102,80 @@ public final class EmbeddedMediaBot {
             }
 
             case "sv":
-                if (TextUtils.isEmpty(arg)) {
+                if (isBlank(arg)) {
                     reply(fromUserId, replyToChannel, "Текущий сервис: " + BotMusicSearch.getServiceLabel(activeService)
-                            + ". Доступны: hitmo, mf, rt, radio");
+                            + ". Доступны: hitmo, mf, rt");
                 } else {
                     String nextSvc = BotMusicSearch.normalizeService(arg);
+                    if (BotMusicSearch.SERVICE_RADIO.equals(nextSvc)) {
+                        nextSvc = BotMusicSearch.SERVICE_HITMO;
+                    }
                     setService(nextSvc);
-                    reply(fromUserId, replyToChannel, "Сервис переключён на: " + BotMusicSearch.getServiceLabel(nextSvc));
+                    persistActiveConfig();
+                    reply(fromUserId, replyToChannel, "Сервис музыки переключён на: " + BotMusicSearch.getServiceLabel(nextSvc));
+                }
+                break;
+
+            case "pop":
+                reply(fromUserId, replyToChannel, "🎲 Подбираю случайный русский хит…");
+                try {
+                    BotMusicSearch.BotTrack track = BotMusicSearch.searchRandomPop();
+                    startTrack(track, false);
+                    reply(fromUserId, replyToChannel, "🎲 Случайный хит: " + track.getDisplayName());
+                } catch (Throwable t) {
+                    reply(fromUserId, replyToChannel, "Не удалось подобрать трек: " + t.getMessage());
                 }
                 break;
 
             case "r":
             case "radio":
-                if (TextUtils.isEmpty(arg)) {
-                    StringBuilder sb = new StringBuilder("Встроенные радиостанции (введите r <№> или r <название>):\n");
-                    for (int i = 0; i < BotMusicSearch.BUILT_IN_RADIO.size(); i++) {
-                        sb.append(i + 1).append(". ").append(BotMusicSearch.BUILT_IN_RADIO.get(i).title).append("\n");
-                    }
-                    reply(fromUserId, replyToChannel, sb.toString().trim());
-                } else {
-                    try {
-                        List<BotMusicSearch.BotTrack> found = BotMusicSearch.searchRadio(arg);
-                        if (found.isEmpty()) {
-                            reply(fromUserId, replyToChannel, "Радиостанция не найдена: " + arg);
-                            return;
-                        }
-                        synchronized (stateLock) {
-                            lastSearchResults = new ArrayList<>(found);
-                        }
-                        startTrack(found.get(0), false);
-                        reply(fromUserId, replyToChannel, "📻 Радио: " + found.get(0).getDisplayName());
-                    } catch (Throwable t) {
-                        reply(fromUserId, replyToChannel, "Ошибка поиска радио: " + t.getMessage());
-                    }
+                handleRadioCommand(arg, fromUserId, replyToChannel);
+                break;
+
+            case "voln":
+                handleVolnorezCommand(arg, fromUserId, replyToChannel);
+                break;
+
+            case "tv":
+                handleTvCommand(arg, fromUserId, replyToChannel);
+                break;
+
+            case "fav":
+            case "f":
+                handleFavCommand(arg, fromUserId, replyToChannel);
+                break;
+
+            case "vo":
+                cfg.voiceAnnounceTrack = !cfg.voiceAnnounceTrack;
+                persistActiveConfig();
+                notifyStateChanged();
+                reply(fromUserId, replyToChannel, cfg.voiceAnnounceTrack
+                        ? "🗣️ Озвучка названия треков в эфир (/vo): ВКЛ"
+                        : "🔇 Озвучка названия треков в эфир (/vo): ВЫКЛ");
+                break;
+
+            case "welcome":
+                if (!cfg.isAdmin(fromUsername)) {
+                    reply(fromUserId, replyToChannel, "Нет прав администратора для смены приветствия");
+                    return;
                 }
+                if (isBlank(arg)) {
+                    reply(fromUserId, replyToChannel, "Приветствие (" + (cfg.welcomeEnabled ? "ВКЛ" : "ВЫКЛ") + "): "
+                            + (isBlank(cfg.welcomeText) ? "(пусто)" : cfg.welcomeText));
+                } else {
+                    cfg.welcomeText = arg;
+                    cfg.welcomeEnabled = true;
+                    persistActiveConfig();
+                    reply(fromUserId, replyToChannel, "👋 Приветствие сервера обновлено и включено.");
+                }
+                break;
+
+            case "settings":
+                reply(fromUserId, replyToChannel, formatSettingsSummary(cfg));
+                break;
+
+            case "set":
+                handleSetCommand(arg, fromUserId, fromUsername, replyToChannel, cfg);
                 break;
 
             case "s":
@@ -908,17 +1216,18 @@ public final class EmbeddedMediaBot {
                 break;
 
             case "q":
-            case "queue": {
+            case "queue":
+            case "playlist": {
                 StringBuilder sb = new StringBuilder();
                 if (currentTrack != null) {
-                    sb.append("Сейчас играет: ").append(currentTrack.getDisplayName()).append("\n");
+                    sb.append("Сейчас в эфире: ").append(currentTrack.getDisplayName()).append("\n");
                 }
                 synchronized (stateLock) {
                     if (queue.isEmpty()) {
                         sb.append("Очередь пуста.");
                     } else {
                         sb.append("Очередь (").append(queue.size()).append("):\n");
-                        for (int i = 0; i < Math.min(queue.size(), 10); i++) {
+                        for (int i = 0; i < Math.min(queue.size(), 15); i++) {
                             sb.append(i + 1).append(". ").append(queue.get(i).getDisplayName()).append("\n");
                         }
                     }
@@ -938,12 +1247,13 @@ public final class EmbeddedMediaBot {
 
             case "v":
             case "vol":
-                if (TextUtils.isEmpty(arg)) {
+                if (isBlank(arg)) {
                     reply(fromUserId, replyToChannel, "🔊 Громкость: " + streamer.getVolume() + "%");
                 } else {
                     try {
                         int val = Integer.parseInt(arg);
                         setVolume(val);
+                        persistActiveConfig();
                         reply(fromUserId, replyToChannel, "🔊 Громкость установлена: " + streamer.getVolume() + "%");
                     } catch (NumberFormatException e) {
                         reply(fromUserId, replyToChannel, "Укажите число от 0 до 100");
@@ -953,14 +1263,18 @@ public final class EmbeddedMediaBot {
 
             case "sf":
             case "sb": {
-                int sec = 15;
-                if (!TextUtils.isEmpty(arg)) {
+                int delta;
+                if (isBlank(arg)) {
+                    delta = "sb".equals(cmd) ? -15 : 15;
+                } else {
                     try {
-                        sec = Math.max(1, Math.min(3600, Integer.parseInt(arg)));
-                    } catch (NumberFormatException ignored) {
+                        int parsed = Integer.parseInt(arg);
+                        int clamped = Math.max(-3600, Math.min(3600, parsed));
+                        delta = "sb".equals(cmd) ? -Math.abs(clamped) : clamped;
+                    } catch (NumberFormatException e) {
+                        delta = "sb".equals(cmd) ? -15 : 15;
                     }
                 }
-                int delta = "sb".equals(cmd) ? -sec : sec;
                 seekBySeconds(delta);
                 reply(fromUserId, replyToChannel, "⏩ Перемотка " + (delta >= 0 ? "+" : "") + delta + " сек");
                 break;
@@ -968,18 +1282,7 @@ public final class EmbeddedMediaBot {
 
             case "now":
             case "cg":
-                if (currentTrack == null) {
-                    reply(fromUserId, replyToChannel, "Сейчас ничего не играет");
-                } else {
-                    String info = "🎵 " + currentTrack.getDisplayName();
-                    if (!TextUtils.isEmpty(liveIcyTitle)) {
-                        info += "\nЭфир: " + liveIcyTitle;
-                    }
-                    if (streamer.isPaused()) {
-                        info += " (на паузе)";
-                    }
-                    reply(fromUserId, replyToChannel, info);
-                }
+                reply(fromUserId, replyToChannel, buildNowPlayingReply());
                 break;
 
             case "j":
@@ -987,30 +1290,11 @@ public final class EmbeddedMediaBot {
                     reply(fromUserId, replyToChannel, "Нет прав администратора для смены канала");
                     return;
                 }
-                if (TextUtils.isEmpty(arg)) {
-                    reply(fromUserId, replyToChannel, "Использование: j <путь или ID канала>");
+                if (isBlank(arg)) {
+                    reply(fromUserId, replyToChannel, "Использование: /j <путь или ID канала>");
                     return;
                 }
-                TeamTalkBase client = this.botClient;
-                if (client != null) {
-                    String[] jp = arg.split("\\s+", 2);
-                    String chTarget = jp[0];
-                    String chPass = jp.length > 1 ? jp[1] : "";
-                    int chId = resolveChannelId(client, arg);
-                    if (chId <= 0) {
-                        chId = resolveChannelId(client, chTarget);
-                    } else {
-                        chPass = "";
-                    }
-                    if (chId > 0) {
-                        targetChannelOverride = String.valueOf(chId);
-                        targetChannelPassOverride = chPass;
-                        client.doJoinChannelByID(chId, chPass);
-                        reply(fromUserId, replyToChannel, "Перехожу в канал #" + chId);
-                    } else {
-                        reply(fromUserId, replyToChannel, "Канал не найден: " + arg);
-                    }
-                }
+                switchChannelFromCommand(arg, fromUserId, replyToChannel, false);
                 break;
 
             case "st":
@@ -1026,6 +1310,430 @@ public final class EmbeddedMediaBot {
                 break;
         }
     }
+
+    private void handleRadioCommand(String arg, int fromUserId, boolean replyToChannel) {
+        if (isBlank(arg)) {
+            reply(fromUserId, replyToChannel, formatPagedCatalog("📻 Радиостанции", "/radio", DjBotCatalogs.BUILT_IN_RADIO, 1));
+            return;
+        }
+        Integer page = parseListPageArg(arg);
+        if (page != null) {
+            reply(fromUserId, replyToChannel, formatPagedCatalog("📻 Радиостанции", "/radio", DjBotCatalogs.BUILT_IN_RADIO, page));
+            return;
+        }
+        try {
+            List<BotMusicSearch.BotTrack> found = BotMusicSearch.searchRadio(arg);
+            if (found.isEmpty()) {
+                reply(fromUserId, replyToChannel, "Радиостанция не найдена: " + arg);
+                return;
+            }
+            synchronized (stateLock) {
+                lastSearchResults = new ArrayList<>(found);
+            }
+            startTrack(found.get(0), false);
+            reply(fromUserId, replyToChannel, "📻 Радио: " + found.get(0).getDisplayName());
+        } catch (Throwable t) {
+            reply(fromUserId, replyToChannel, "Ошибка поиска радио: " + t.getMessage());
+        }
+    }
+
+    private void handleVolnorezCommand(String arg, int fromUserId, boolean replyToChannel) {
+        List<BotMusicSearch.BotTrack> all = DjBotCatalogs.getVolnorezStations(false);
+        if (isBlank(arg)) {
+            reply(fromUserId, replyToChannel, formatPagedCatalog("🌊 Станции Волнореза", "/voln", all, 1));
+            return;
+        }
+        Integer page = parseListPageArg(arg);
+        if (page != null) {
+            reply(fromUserId, replyToChannel, formatPagedCatalog("🌊 Станции Волнореза", "/voln", all, page));
+            return;
+        }
+        List<BotMusicSearch.BotTrack> found = DjBotCatalogs.searchVolnorez(arg);
+        if (found.isEmpty()) {
+            reply(fromUserId, replyToChannel, "Станция Волнореза не найдена: " + arg);
+            return;
+        }
+        startTrack(found.get(0), false);
+        reply(fromUserId, replyToChannel, "🌊 Волнорез: " + found.get(0).title);
+    }
+
+    private void handleTvCommand(String arg, int fromUserId, boolean replyToChannel) {
+        epg.ensureLoadedAsync();
+        if (isBlank(arg)) {
+            reply(fromUserId, replyToChannel, formatPagedCatalog("📺 ТВ-каналы", "/tv", DjBotCatalogs.BUILT_IN_TV, 1));
+            return;
+        }
+        String low = arg.toLowerCase(Locale.ROOT).trim();
+        if ("stop".equals(low) || "s".equals(low)) {
+            stopPlayback();
+            reply(fromUserId, replyToChannel, "📺 ТВ остановлено");
+            return;
+        }
+        if ("epg".equals(low) || low.startsWith("epg ")) {
+            String queryCh = low.length() > 3 ? arg.substring(3).trim() : "";
+            String targetChannelName = queryCh;
+            if (isBlank(targetChannelName) && currentTrack != null && DjBotCatalogs.SERVICE_TV.equals(currentTrack.service)) {
+                targetChannelName = currentTrack.title;
+            }
+            if (isBlank(targetChannelName)) {
+                reply(fromUserId, replyToChannel, "Укажите канал: /tv epg <название> или включите ТВ-канал.");
+                return;
+            }
+            DjBotEpg.EpgInfo info = epg.getNow(targetChannelName);
+            if (info == null) {
+                reply(fromUserId, replyToChannel, epg.isLoaded()
+                        ? ("Телепрограмма для «" + targetChannelName + "» не найдена.")
+                        : "Телепрограмма (XMLTV EPG) загружается, повторите через несколько секунд…");
+            } else {
+                reply(fromUserId, replyToChannel, info.formatDetailed(targetChannelName));
+            }
+            return;
+        }
+        Integer page = parseListPageArg(arg);
+        if (page != null) {
+            reply(fromUserId, replyToChannel, formatPagedCatalog("📺 ТВ-каналы", "/tv", DjBotCatalogs.BUILT_IN_TV, page));
+            return;
+        }
+        List<BotMusicSearch.BotTrack> found = DjBotCatalogs.searchTv(arg);
+        if (found.isEmpty()) {
+            reply(fromUserId, replyToChannel, "ТВ-канал не найден: " + arg);
+            return;
+        }
+        startTvTrack(found.get(0), fromUserId, replyToChannel, false);
+    }
+
+    private void startTvTrack(BotMusicSearch.BotTrack channel, int fromUserId, boolean replyToChannel, boolean fromUi) {
+        appendLog("📺 Проверка ТВ-потока: " + channel.title);
+        String blockedReason = DjBotCatalogs.probeTvUrlBlocked(channel.url);
+        if (blockedReason != null) {
+            String err = "⚠️ ТВ «" + channel.title + "» недоступен: " + blockedReason;
+            appendLog(err);
+            if (!fromUi && fromUserId > 0) {
+                reply(fromUserId, replyToChannel, err);
+            }
+            return;
+        }
+        startTrack(channel, fromUi);
+        lastEpgTickMs = SystemClock.uptimeMillis();
+        DjBotEpg.EpgInfo epgInfo = refreshCurrentTvEpg(false);
+        if (!fromUi && fromUserId > 0) {
+            if (epgInfo != null) {
+                reply(fromUserId, replyToChannel, epgInfo.formatDetailed(channel.title));
+            } else {
+                reply(fromUserId, replyToChannel, "📺 Включён ТВ-канал: " + channel.title);
+            }
+        }
+    }
+
+    private void handleFavCommand(String arg, int fromUserId, boolean replyToChannel) {
+        List<BotConfig.FavoriteItem> favs = BotConfig.loadFavorites(appContext);
+        if (isBlank(arg)) {
+            if (favs.isEmpty()) {
+                reply(fromUserId, replyToChannel, "Избранное пусто. Добавьте: /fav + (текущий трек) или /fav + <ссылка>");
+                return;
+            }
+            StringBuilder sb = new StringBuilder("⭐ Избранное:\n");
+            for (int i = 0; i < favs.size(); i++) {
+                sb.append(i + 1).append(". ").append(favs.get(i).label).append("\n");
+            }
+            sb.append("/fav <№> — включить | /fav + — добавить | /fav - <№> — удалить");
+            reply(fromUserId, replyToChannel, sb.toString().trim());
+            return;
+        }
+        if (arg.equals("+")) {
+            BotMusicSearch.BotTrack cur = this.currentTrack;
+            if (cur == null || isBlank(cur.url)) {
+                reply(fromUserId, replyToChannel, "Сейчас ничего не играет. Используйте: /fav + <ссылка>");
+                return;
+            }
+            for (BotConfig.FavoriteItem it : favs) {
+                if (cur.url.equals(it.url)) {
+                    reply(fromUserId, replyToChannel, "Уже есть в избранном: " + it.label);
+                    return;
+                }
+            }
+            favs.add(new BotConfig.FavoriteItem(cur.getDisplayName(), cur.url, cur.service, cur.isLiveStream));
+            BotConfig.saveFavorites(appContext, favs);
+            reply(fromUserId, replyToChannel, "⭐ Добавлено в избранное (#" + favs.size() + "): " + cur.getDisplayName());
+            return;
+        }
+        if (arg.startsWith("+ ")) {
+            String url = arg.substring(2).trim();
+            if (!BotMusicSearch.isDirectUrl(url)) {
+                reply(fromUserId, replyToChannel, "Укажите корректную ссылку http(s)://…");
+                return;
+            }
+            favs.add(new BotConfig.FavoriteItem(url, url, "url", true));
+            BotConfig.saveFavorites(appContext, favs);
+            reply(fromUserId, replyToChannel, "⭐ Ссылка добавлена в избранное (#" + favs.size() + ")");
+            return;
+        }
+        if (arg.startsWith("-")) {
+            String numStr = arg.substring(1).trim();
+            try {
+                int idx = Integer.parseInt(numStr);
+                if (idx >= 1 && idx <= favs.size()) {
+                    BotConfig.FavoriteItem removed = favs.remove(idx - 1);
+                    BotConfig.saveFavorites(appContext, favs);
+                    reply(fromUserId, replyToChannel, "Удалено из избранного: " + removed.label);
+                } else {
+                    reply(fromUserId, replyToChannel, "Нет записи #" + idx);
+                }
+            } catch (NumberFormatException e) {
+                reply(fromUserId, replyToChannel, "Использование: /fav - <номер>");
+            }
+            return;
+        }
+        try {
+            int idx = Integer.parseInt(arg.trim());
+            if (idx >= 1 && idx <= favs.size()) {
+                BotConfig.FavoriteItem it = favs.get(idx - 1);
+                BotMusicSearch.BotTrack track = new BotMusicSearch.BotTrack(
+                        it.label, "", it.url, !isBlank(it.service) ? it.service : "url", it.isLive, null, null);
+                if (DjBotCatalogs.SERVICE_TV.equals(track.service)) {
+                    startTvTrack(track, fromUserId, replyToChannel, false);
+                } else {
+                    startTrack(track, false);
+                    reply(fromUserId, replyToChannel, "⭐ Играет из избранного: " + it.label);
+                }
+            } else {
+                reply(fromUserId, replyToChannel, "Нет записи #" + idx + " в избранном");
+            }
+        } catch (NumberFormatException e) {
+            reply(fromUserId, replyToChannel, "Использование: /fav [<№> | + | - <№>]");
+        }
+    }
+
+    private void handleSetCommand(String arg, int fromUserId, String fromUsername, boolean replyToChannel, BotConfig cfg) {
+        if (!cfg.isAdmin(fromUsername)) {
+            reply(fromUserId, replyToChannel, "Нет прав администратора для изменения настроек");
+            return;
+        }
+        if (isBlank(arg)) {
+            reply(fromUserId, replyToChannel,
+                    "Использование: /set <ключ> <значение>\n"
+                    + "Ключи: welcome, welcome.enabled, volume, channel, guard, guard.empty_nick, guard.mat, guard.botnet, guard.ban, service, vo");
+            return;
+        }
+        String[] kv = arg.split("\\s+", 2);
+        String key = kv[0].trim().toLowerCase(Locale.ROOT);
+        String val = kv.length > 1 ? kv[1].trim() : "";
+        if (val.isEmpty()) {
+            reply(fromUserId, replyToChannel, "Укажите значение для " + key);
+            return;
+        }
+        switch (key) {
+            case "welcome":
+            case "welcome.text":
+                cfg.welcomeText = val;
+                cfg.welcomeEnabled = true;
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "✅ welcome обновлён и включён.");
+                break;
+
+            case "welcome.enabled":
+                cfg.welcomeEnabled = parseOnOff(val);
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "✅ welcome.enabled = " + (cfg.welcomeEnabled ? "on" : "off"));
+                break;
+
+            case "volume":
+            case "playback.default_volume":
+                try {
+                    int vol = Integer.parseInt(val);
+                    setVolume(vol);
+                    persistActiveConfig();
+                    reply(fromUserId, replyToChannel, "✅ volume = " + streamer.getVolume() + "%");
+                } catch (NumberFormatException e) {
+                    reply(fromUserId, replyToChannel, "Укажите громкость 0–100");
+                }
+                break;
+
+            case "channel":
+            case "server.channel":
+                switchChannelFromCommand(val, fromUserId, replyToChannel, true);
+                break;
+
+            case "guard":
+            case "guard.enabled":
+                cfg.guardEnabled = parseOnOff(val);
+                persistActiveConfig();
+                notifyStateChanged();
+                reply(fromUserId, replyToChannel, "🛡️ Guard = " + (cfg.guardEnabled ? "ВКЛ" : "ВЫКЛ"));
+                break;
+
+            case "guard.empty_nick":
+                cfg.guardKickEmptyNick = parseOnOff(val);
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "🛡️ guard.empty_nick = " + (cfg.guardKickEmptyNick ? "on" : "off"));
+                break;
+
+            case "guard.mat":
+                cfg.guardMatCheck = parseOnOff(val);
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "🛡️ guard.mat = " + (cfg.guardMatCheck ? "on" : "off"));
+                break;
+
+            case "guard.botnet":
+                cfg.guardBotnetNickCheck = parseOnOff(val);
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "🛡️ guard.botnet = " + (cfg.guardBotnetNickCheck ? "on" : "off"));
+                break;
+
+            case "guard.ban":
+                cfg.guardBanOnViolation = parseOnOff(val);
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "🛡️ guard.ban = " + (cfg.guardBanOnViolation ? "on" : "off"));
+                break;
+
+            case "service":
+                String svc = BotMusicSearch.normalizeService(val);
+                setService(svc);
+                persistActiveConfig();
+                reply(fromUserId, replyToChannel, "✅ service = " + BotMusicSearch.getServiceLabel(svc));
+                break;
+
+            case "vo":
+                cfg.voiceAnnounceTrack = parseOnOff(val);
+                persistActiveConfig();
+                notifyStateChanged();
+                reply(fromUserId, replyToChannel, "✅ vo = " + (cfg.voiceAnnounceTrack ? "on" : "off"));
+                break;
+
+            default:
+                reply(fromUserId, replyToChannel, "Неизвестный ключ: " + key);
+                break;
+        }
+    }
+
+    private void switchChannelFromCommand(String arg, int fromUserId, boolean replyToChannel, boolean persist) {
+        TeamTalkBase client = this.botClient;
+        if (client == null) return;
+        String[] jp = arg.split("\\s+", 2);
+        String chTarget = jp[0];
+        String chPass = jp.length > 1 ? jp[1] : "";
+        int chId = resolveChannelId(client, arg);
+        if (chId <= 0) {
+            chId = resolveChannelId(client, chTarget);
+        } else {
+            chPass = "";
+        }
+        if (chId > 0) {
+            targetChannelOverride = String.valueOf(chId);
+            targetChannelPassOverride = chPass;
+            if (persist && activeConfig != null) {
+                activeConfig.channel = arg;
+                persistActiveConfig();
+            }
+            client.doJoinChannelByID(chId, chPass);
+            reply(fromUserId, replyToChannel, "Перехожу в канал #" + chId);
+        } else {
+            reply(fromUserId, replyToChannel, "Канал не найден: " + arg);
+        }
+    }
+
+    private String formatSettingsSummary(BotConfig cfg) {
+        String maskedPass = isBlank(cfg.password) ? "(нет)" : "***";
+        String maskedChanPass = isBlank(cfg.channelPassword) ? "(нет)" : "***";
+        return "⚙️ Настройки DJ Bot:\n"
+                + "Сервер: " + cfg.host + ":" + cfg.tcpPort + (cfg.encrypted ? " (TLS)" : "") + "\n"
+                + "Аккаунт: " + (isBlank(cfg.username) ? "(гость)" : cfg.username) + " / пароль: " + maskedPass + "\n"
+                + "Ник: " + cfg.nickname + " | Канал: " + cfg.channel + " (пароль: " + maskedChanPass + ")\n"
+                + "Сервис: " + BotMusicSearch.getServiceLabel(activeService) + " | Громкость: " + streamer.getVolume() + "%\n"
+                + "Озвучка треков (/vo): " + (cfg.voiceAnnounceTrack ? "ВКЛ" : "ВЫКЛ") + "\n"
+                + "Приветствие: " + (cfg.welcomeEnabled ? "ВКЛ" : "ВЫКЛ")
+                + (isBlank(cfg.welcomeText) ? "" : (" — " + cfg.welcomeText)) + "\n"
+                + "🛡️ Guard: " + (cfg.guardEnabled ? "ВКЛ" : "ВЫКЛ")
+                + " (пустые=" + (cfg.guardKickEmptyNick ? "да" : "нет")
+                + ", мат=" + (cfg.guardMatCheck ? "да" : "нет")
+                + ", ботнет=" + (cfg.guardBotnetNickCheck ? "да" : "нет")
+                + ", бан=" + (cfg.guardBanOnViolation ? "IP-бан" : "кик") + ")";
+    }
+
+    private String buildNowPlayingReply() {
+        BotMusicSearch.BotTrack cur = this.currentTrack;
+        if (cur == null) {
+            return "Сейчас ничего не играет";
+        }
+        if (DjBotCatalogs.SERVICE_TV.equals(cur.service)) {
+            DjBotEpg.EpgInfo info = epg.getNow(cur.title);
+            if (info != null) {
+                return info.formatDetailed(cur.title);
+            }
+            return "📺 ТВ: " + cur.title + (streamer.isPaused() ? " (на паузе)" : "");
+        }
+        StringBuilder sb = new StringBuilder();
+        if (DjBotCatalogs.SERVICE_VOLN.equals(cur.service)) {
+            sb.append("🌊 Волнорез: ").append(cur.title);
+        } else if (BotMusicSearch.SERVICE_RADIO.equals(cur.service)) {
+            sb.append("📻 Радио: ").append(cur.title);
+        } else {
+            sb.append("🎵 ").append(cur.getDisplayName());
+        }
+        if (!isBlank(liveIcyTitle)) {
+            sb.append("\nЭфир: ").append(liveIcyTitle);
+        }
+        if (liveListeners >= 0) {
+            sb.append("\nСлушателей на станции: ").append(liveListeners);
+        }
+        if (streamer.isPaused()) {
+            sb.append(" (на паузе)");
+        }
+        return sb.toString();
+    }
+
+    private static Integer parseListPageArg(String arg) {
+        if (isBlank(arg)) return null;
+        String[] parts = arg.trim().split("\\s+");
+        if (parts.length >= 1 && ("l".equalsIgnoreCase(parts[0]) || "list".equalsIgnoreCase(parts[0]))) {
+            if (parts.length == 1) return 1;
+            try {
+                return Math.max(1, Integer.parseInt(parts[1]));
+            } catch (NumberFormatException ignored) {
+                return 1;
+            }
+        }
+        return null;
+    }
+
+    private static String formatPagedCatalog(String title, String cmdPrefix, List<BotMusicSearch.BotTrack> items, int page) {
+        if (items == null || items.isEmpty()) {
+            return title + ": список пуст.";
+        }
+        int totalPages = Math.max(1, (items.size() + PAGE_SIZE - 1) / PAGE_SIZE);
+        int safePage = Math.max(1, Math.min(totalPages, page));
+        int from = (safePage - 1) * PAGE_SIZE;
+        int to = Math.min(items.size(), from + PAGE_SIZE);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(title).append(" (стр. ").append(safePage).append("/").append(totalPages)
+                .append(", всего ").append(items.size()).append("):\n");
+        for (int i = from; i < to; i++) {
+            sb.append(i + 1).append(". ").append(items.get(i).title).append("\n");
+        }
+        sb.append("Включить: ").append(cmdPrefix).append(" <№> | Поиск: ").append(cmdPrefix).append(" <текст>");
+        if (totalPages > 1) {
+            sb.append(" | Стр.: ").append(cmdPrefix).append(" l <стр>");
+        }
+        return sb.toString().trim();
+    }
+
+    private static boolean parseOnOff(String val) {
+        String v = val != null ? val.trim().toLowerCase(Locale.ROOT) : "";
+        return "on".equals(v) || "1".equals(v) || "true".equals(v) || "yes".equals(v) || "да".equals(v) || "вкл".equals(v);
+    }
+
+    private void persistActiveConfig() {
+        BotConfig cfg = this.activeConfig;
+        if (cfg != null) {
+            try {
+                BotConfig.upsert(appContext, cfg);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    // --- Playback & Track Announcements ---
 
     private void enqueueOrPlay(BotMusicSearch.BotTrack track, int fromUserId, boolean replyToChannel) {
         if (streamer.isRunning() && currentTrack != null && !currentTrack.isLiveStream) {
@@ -1047,6 +1755,8 @@ public final class EmbeddedMediaBot {
         synchronized (stateLock) {
             this.currentTrack = track;
             this.liveIcyTitle = "";
+            this.currentEpgSummary = "";
+            this.liveListeners = -1;
             if (history.isEmpty() || !history.get(history.size() - 1).url.equals(track.url)) {
                 history.add(track);
                 if (history.size() > 30) {
@@ -1057,17 +1767,135 @@ public final class EmbeddedMediaBot {
         appendLog("▶ Старт: " + track.getDisplayName());
         BotConfig cfg = this.activeConfig;
         if (cfg != null && cfg.autoStatusTrack) {
-            updateBotStatus("🎵 " + track.getDisplayName());
+            if (DjBotCatalogs.SERVICE_TV.equals(track.service)) {
+                updateBotStatus("📺 " + track.title);
+            } else if (DjBotCatalogs.SERVICE_VOLN.equals(track.service)) {
+                updateBotStatus("🌊 " + track.title);
+            } else if (BotMusicSearch.SERVICE_RADIO.equals(track.service)) {
+                updateBotStatus("📻 " + track.title);
+            } else {
+                updateBotStatus("🎵 " + track.getDisplayName());
+            }
         }
         if (announceToChannel && cfg != null && cfg.sendChannelAnnouncements && currentChannelId > 0) {
             sendChannelMessage("🎵 " + track.getDisplayName());
         }
-        streamer.play(track);
+
+        File introWav = null;
+        if (cfg != null && cfg.voiceAnnounceTrack) {
+            String spoken = DjBotCatalogs.SERVICE_TV.equals(track.service)
+                    ? ("Телеканал " + track.title)
+                    : ("Сейчас играет " + track.getDisplayName());
+            introWav = synthesizeAnnouncementWav(spoken);
+        }
+
+        streamer.play(track, introWav);
         notifyStateChanged();
     }
 
+    private DjBotEpg.EpgInfo refreshCurrentTvEpg(boolean quiet) {
+        BotMusicSearch.BotTrack cur = this.currentTrack;
+        if (cur == null || !DjBotCatalogs.SERVICE_TV.equals(cur.service)) return null;
+        DjBotEpg.EpgInfo info = epg.getNow(cur.title);
+        if (info != null) {
+            String status = info.formatStatus(cur.title);
+            this.currentEpgSummary = status;
+            BotConfig cfg = this.activeConfig;
+            if (cfg != null && cfg.autoStatusTrack) {
+                updateBotStatus(status);
+            }
+            if (!quiet) {
+                appendLog(status);
+            }
+            notifyStateChanged();
+        }
+        return info;
+    }
+
+    private File synthesizeAnnouncementWav(String text) {
+        if (isBlank(text)) return null;
+        try {
+            ensureBotTtsReady();
+            if (!botTtsReady || botTts == null) return null;
+
+            File outFile = new File(appContext.getCacheDir(), "djbot_vo_" + voCounter.incrementAndGet() + ".wav");
+            if (outFile.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                outFile.delete();
+            }
+            final String uttId = "djbot_vo_" + voCounter.get();
+            final CountDownLatch doneLatch = new CountDownLatch(1);
+            final boolean[] ok = {false};
+
+            synchronized (ttsLock) {
+                botTts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String utteranceId) {}
+                    @Override public void onDone(String utteranceId) {
+                        if (uttId.equals(utteranceId)) {
+                            ok[0] = true;
+                            doneLatch.countDown();
+                        }
+                    }
+                    @Override @SuppressWarnings("deprecation") public void onError(String utteranceId) {
+                        if (uttId.equals(utteranceId)) doneLatch.countDown();
+                    }
+                    @Override public void onError(String utteranceId, int errorCode) {
+                        if (uttId.equals(utteranceId)) doneLatch.countDown();
+                    }
+                });
+                int res = botTts.synthesizeToFile(text.trim(), new Bundle(), outFile, uttId);
+                if (res != TextToSpeech.SUCCESS) {
+                    return null;
+                }
+            }
+            doneLatch.await(3500, TimeUnit.MILLISECONDS);
+            if (ok[0] && outFile.exists() && outFile.length() > 44) {
+                return outFile;
+            }
+            if (outFile.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                outFile.delete();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "DJ Bot TTS /vo synthesis failed: " + t.getMessage());
+        }
+        return null;
+    }
+
+    private void ensureBotTtsReady() {
+        if (botTtsReady && botTts != null) return;
+        CountDownLatch initLatch = new CountDownLatch(1);
+        synchronized (ttsLock) {
+            if (botTtsReady && botTts != null) return;
+            try {
+                botTts = new TextToSpeech(appContext, status -> {
+                    if (status == TextToSpeech.SUCCESS && botTts != null) {
+                        try {
+                            Locale ru = new Locale("ru", "RU");
+                            int r = botTts.setLanguage(ru);
+                            if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                                botTts.setLanguage(Locale.getDefault());
+                            }
+                            botTts.setSpeechRate(1.05f);
+                        } catch (Throwable ignored) {
+                        }
+                        botTtsReady = true;
+                    }
+                    initLatch.countDown();
+                });
+            } catch (Throwable t) {
+                initLatch.countDown();
+            }
+        }
+        try {
+            initLatch.await(2500, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private void onTrackFinished(BotMusicSearch.BotTrack track, boolean completedNormally, String errorMessage) {
-        if (!TextUtils.isEmpty(errorMessage)) {
+        if (!isBlank(errorMessage)) {
             appendLog("Ошибка воспроизведения: " + errorMessage);
         }
         BotMusicSearch.BotTrack next = null;
@@ -1081,18 +1909,27 @@ public final class EmbeddedMediaBot {
         } else {
             this.currentTrack = null;
             this.liveIcyTitle = "";
+            this.currentEpgSummary = "";
+            this.liveListeners = -1;
             updateBotStatus("");
             notifyStateChanged();
         }
     }
 
-    private void onIcyTitleChanged(String liveTitle) {
+    private void onLiveTitleChanged(String liveTitle) {
         this.liveIcyTitle = liveTitle != null ? liveTitle : "";
-        appendLog("📻 Эфир: " + this.liveIcyTitle);
+        boolean isVoln = currentTrack != null && DjBotCatalogs.SERVICE_VOLN.equals(currentTrack.service);
+        String prefix = isVoln ? "🌊 " : "📻 ";
+        appendLog(prefix + "Эфир: " + this.liveIcyTitle);
         BotConfig cfg = this.activeConfig;
-        if (cfg != null && cfg.autoStatusTrack && !TextUtils.isEmpty(this.liveIcyTitle)) {
-            updateBotStatus("📻 " + this.liveIcyTitle);
+        if (cfg != null && cfg.autoStatusTrack && !isBlank(this.liveIcyTitle)) {
+            updateBotStatus(prefix + this.liveIcyTitle);
         }
+        notifyStateChanged();
+    }
+
+    private void onLiveListenersChanged(int count) {
+        this.liveListeners = count;
         notifyStateChanged();
     }
 
@@ -1116,7 +1953,7 @@ public final class EmbeddedMediaBot {
 
     private void sendChannelMessage(String text) {
         TeamTalkBase client = this.botClient;
-        if (client == null || currentChannelId <= 0 || TextUtils.isEmpty(text)) return;
+        if (client == null || currentChannelId <= 0 || isBlank(text)) return;
         for (String chunk : splitMessage(text, 400)) {
             TextMessage tm = new TextMessage();
             tm.nMsgType = TextMsgType.MSGTYPE_CHANNEL;
@@ -1131,7 +1968,7 @@ public final class EmbeddedMediaBot {
 
     private void sendPrivateMessage(int toUserId, String text) {
         TeamTalkBase client = this.botClient;
-        if (client == null || toUserId <= 0 || TextUtils.isEmpty(text)) return;
+        if (client == null || toUserId <= 0 || isBlank(text)) return;
         for (String chunk : splitMessage(text, 400)) {
             TextMessage tm = new TextMessage();
             tm.nMsgType = TextMsgType.MSGTYPE_USER;
@@ -1226,6 +2063,7 @@ public final class EmbeddedMediaBot {
         u.nChannelID = src.nChannelID;
         u.szNickname = src.szNickname != null ? src.szNickname : "";
         u.szUsername = src.szUsername != null ? src.szUsername : "";
+        u.szIPAddress = src.szIPAddress != null ? src.szIPAddress : "";
         return u;
     }
 
@@ -1235,7 +2073,7 @@ public final class EmbeddedMediaBot {
         Set<Integer> visited = new HashSet<>();
         Channel cur = ch;
         while (cur != null && visited.add(cur.nChannelID)) {
-            if (!TextUtils.isEmpty(cur.szName)) {
+            if (!isBlank(cur.szName)) {
                 parts.add(cur.szName);
             }
             if (cur.nParentID <= 0) break;

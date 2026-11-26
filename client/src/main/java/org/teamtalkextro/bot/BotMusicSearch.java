@@ -16,18 +16,21 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Random;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Pure-Java music & radio search engine matching Daket52i/TTMediaBot-by-dancho.
+ * Pure-Java media search engine for DJ Bot (analog of TT-DJbot).
  *
  * Supported services:
  * - "hitmo": rus.hitmotop.com (data-musmeta JSON) + rus.hitmos.fm fallback
  * - "mf":    muzofond.su (data-file / data-artist / data-track-title) + hitmo fallback
  * - "rt":    rutube.ru API search + play options HLS resolver
- * - "radio": 16 curated Russian FM stations + radio-browser.info live search
+ * - "radio": 32 curated Russian FM stations + radio-browser.info live search
+ * - "voln":  Volnorez online stations
+ * - "tv":    33 priority Russian Live TV channels
  * - Direct HTTP(S) URLs and local Android URIs
  */
 public final class BotMusicSearch {
@@ -44,6 +47,7 @@ public final class BotMusicSearch {
     private static final int CONNECT_TIMEOUT_MS = 10000;
     private static final int READ_TIMEOUT_MS = 12000;
     private static final int MAX_RESULTS = 15;
+    private static final Random RANDOM = new Random();
 
     private static final Pattern HITMO_MUSMETA_PATTERN =
             Pattern.compile("data-musmeta\\s*=\\s*(['\"])(.*?)\\1", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
@@ -101,40 +105,15 @@ public final class BotMusicSearch {
         }
     }
 
-    public static final List<BotTrack> BUILT_IN_RADIO;
-
-    static {
-        List<BotTrack> stations = new ArrayList<>();
-        stations.add(radio("Европа Плюс", "https://ep128.hostingradio.ru:8030/ep128"));
-        stations.add(radio("Русское Радио", "https://rusradio.hostingradio.ru/rusradio96.aacp"));
-        stations.add(radio("Дорожное Радио", "https://dorognoe.hostingradio.ru/radio"));
-        stations.add(radio("Авторадио", "https://pub0302.101.ru:8443/stream/air/aac/64/100"));
-        stations.add(radio("Ретро FM", "https://retro.hostingradio.ru:8043/retro128"));
-        stations.add(radio("Радио Рекорд", "https://radiorecord.hostingradio.ru/rr_main96.aacp"));
-        stations.add(radio("Радио Шансон", "https://chanson.hostingradio.ru:8041/chanson128.mp3"));
-        stations.add(radio("DFM", "https://dfm.hostingradio.ru/dfm96.aacp"));
-        stations.add(radio("Наше Радио", "https://nashe1.hostingradio.ru/nashe-128.mp3"));
-        stations.add(radio("Хит FM", "https://hitfm.hostingradio.ru/hitfm96.aacp"));
-        stations.add(radio("Юмор FM", "https://pub0302.101.ru:8443/stream/air/aac/64/102"));
-        stations.add(radio("Love Radio", "https://stream.loveradio.ru/12_love_28"));
-        stations.add(radio("Радио Дача", "https://stream.radiodacha.ru/14_dacha_28"));
-        stations.add(radio("Maximum", "https://maximum.hostingradio.ru/maximum96.aacp"));
-        stations.add(radio("Energy (NRJ)", "https://pub0302.101.ru:8443/stream/air/aac/64/99"));
-        stations.add(radio("Like FM", "https://pub0302.101.ru:8443/stream/air/aac/64/219"));
-        BUILT_IN_RADIO = Collections.unmodifiableList(stations);
-    }
+    public static final List<BotTrack> BUILT_IN_RADIO = DjBotCatalogs.BUILT_IN_RADIO;
 
     private BotMusicSearch() {
-    }
-
-    private static BotTrack radio(String name, String streamUrl) {
-        return new BotTrack(name, "Радио", streamUrl, SERVICE_RADIO, true, null, null);
     }
 
     public static String normalizeService(String svc) {
         if (svc == null) return SERVICE_HITMO;
         String s = svc.trim().toLowerCase(Locale.ROOT);
-        if (s.equals("mf") || s.equals("muzofond") || s.equals("музфонд")) return SERVICE_MF;
+        if (s.equals("mf") || s.equals("mz") || s.equals("muzofond") || s.equals("музфонд")) return SERVICE_MF;
         if (s.equals("rt") || s.equals("rutube") || s.equals("рутуб")) return SERVICE_RUTUBE;
         if (s.equals("radio") || s.equals("r") || s.equals("радио")) return SERVICE_RADIO;
         return SERVICE_HITMO;
@@ -171,6 +150,7 @@ public final class BotMusicSearch {
             boolean live = q.toLowerCase(Locale.ROOT).contains(".m3u8")
                     || q.toLowerCase(Locale.ROOT).contains("stream")
                     || q.toLowerCase(Locale.ROOT).contains("radio")
+                    || q.toLowerCase(Locale.ROOT).contains("volnorez.com")
                     || q.toLowerCase(Locale.ROOT).contains(".aacp")
                     || q.toLowerCase(Locale.ROOT).contains(".pls");
             String title = extractNameFromUrl(q);
@@ -189,6 +169,32 @@ public final class BotMusicSearch {
             default:
                 return searchHitmo(q);
         }
+    }
+
+    /**
+     * Picks a random popular Russian hit from curated chanson/pop/rock queries on Hitmo/Muzofond.
+     */
+    public static BotTrack searchRandomPop() throws IOException {
+        List<String> queries = new ArrayList<>(DjBotCatalogs.POP_QUERIES);
+        Collections.shuffle(queries, RANDOM);
+        for (int attempt = 0; attempt < Math.min(4, queries.size()); attempt++) {
+            String q = queries.get(attempt);
+            List<BotTrack> list = null;
+            try {
+                list = searchHitmo(q);
+            } catch (IOException ignored) {
+            }
+            if (list == null || list.isEmpty()) {
+                try {
+                    list = searchMuzofond(q);
+                } catch (IOException ignored) {
+                }
+            }
+            if (list != null && !list.isEmpty()) {
+                return list.get(RANDOM.nextInt(list.size()));
+            }
+        }
+        throw new IOException("Не удалось подобрать случайный хит");
     }
 
     public static List<BotTrack> searchHitmo(String query) throws IOException {
@@ -412,9 +418,9 @@ public final class BotMusicSearch {
 
         List<BotTrack> results = new ArrayList<>();
         Set<String> seenUrls = new LinkedHashSet<>();
-        String low = q.toLowerCase(Locale.ROOT);
+        String low = q.toLowerCase(Locale.ROOT).replace('ё', 'е');
         for (BotTrack st : BUILT_IN_RADIO) {
-            if (st.title.toLowerCase(Locale.ROOT).contains(low)) {
+            if (st.title.toLowerCase(Locale.ROOT).replace('ё', 'е').contains(low)) {
                 results.add(st);
                 seenUrls.add(st.url);
             }

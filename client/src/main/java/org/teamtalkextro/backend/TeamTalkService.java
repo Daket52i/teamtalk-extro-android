@@ -859,7 +859,7 @@ public class TeamTalkService extends Service implements BluetoothHeadsetHelper.H
         }
         String mainText = channel != null ? String.format("%s / %s", serverEntry.servername, this.mychannel.szName) : serverEntry.servername;
         if (botActive) {
-            return mainText + " • Bot";
+            return mainText + " • DJ Bot";
         }
         return mainText;
     }

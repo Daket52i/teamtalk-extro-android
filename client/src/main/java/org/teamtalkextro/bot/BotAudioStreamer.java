@@ -58,6 +58,10 @@ public final class BotAudioStreamer {
         void onStreamTitleChanged(String liveTitle);
     }
 
+    public interface OnListenersListener {
+        void onListenersChanged(int count);
+    }
+
     private final Context appContext;
     private volatile TeamTalkBase botClient;
     private volatile boolean running = false;
@@ -70,11 +74,13 @@ public final class BotAudioStreamer {
     private volatile BotMusicSearch.BotTrack activeTrack = null;
     private volatile OnTrackFinishedListener finishedListener;
     private volatile OnMetadataListener metadataListener;
+    private volatile OnListenersListener listenersListener;
 
     private final AtomicInteger playGeneration = new AtomicInteger(0);
     private final Object threadLock = new Object();
     private Thread playThread;
     private Thread icyThread;
+    private DjBotCatalogs.VolnorezMetadataReader volnReader;
     private int sampleIndex = 0;
 
     public BotAudioStreamer(Context context) {
@@ -91,6 +97,10 @@ public final class BotAudioStreamer {
 
     public void setOnMetadataListener(OnMetadataListener listener) {
         this.metadataListener = listener;
+    }
+
+    public void setOnListenersListener(OnListenersListener listener) {
+        this.listenersListener = listener;
     }
 
     public void setVolume(int percent) {
@@ -143,6 +153,10 @@ public final class BotAudioStreamer {
     }
 
     public void play(BotMusicSearch.BotTrack track) {
+        play(track, null);
+    }
+
+    public void play(BotMusicSearch.BotTrack track, File introWavFile) {
         stop();
         if (track == null) return;
 
@@ -155,7 +169,7 @@ public final class BotAudioStreamer {
             this.pendingSeekDeltaUs = 0L;
             this.currentPositionUs = 0L;
             this.totalDurationUs = 0L;
-            this.playThread = new Thread(() -> runPlayback(track, gen), "Extro-BotAudio");
+            this.playThread = new Thread(() -> runPlayback(track, introWavFile, gen), "Extro-BotAudio");
             this.playThread.start();
         }
     }
@@ -167,11 +181,20 @@ public final class BotAudioStreamer {
         this.pendingSeek = false;
         Thread pt;
         Thread it;
+        DjBotCatalogs.VolnorezMetadataReader vr;
         synchronized (threadLock) {
             pt = this.playThread;
             it = this.icyThread;
+            vr = this.volnReader;
             this.playThread = null;
             this.icyThread = null;
+            this.volnReader = null;
+        }
+        if (vr != null) {
+            try {
+                vr.stop();
+            } catch (Throwable ignored) {
+            }
         }
         if (it != null) {
             it.interrupt();
@@ -196,13 +219,22 @@ public final class BotAudioStreamer {
         return (float) Math.pow(vol / 100.0, 1.5);
     }
 
-    private void runPlayback(BotMusicSearch.BotTrack initialTrack, int gen) {
+    private void runPlayback(BotMusicSearch.BotTrack initialTrack, File introWavFile, int gen) {
         boolean completedNormally = false;
         String errorMessage = null;
         BotMusicSearch.BotTrack track = initialTrack;
         File tempFile = null;
 
         try {
+            if (introWavFile != null && introWavFile.exists() && introWavFile.length() > 44 && isStillActive(gen)) {
+                try {
+                    decodeAndStreamFile(introWavFile, gen);
+                } catch (Throwable t) {
+                    Log.w(TAG, "Intro TTS WAV playback skipped: " + t.getMessage());
+                }
+            }
+            if (!isStillActive(gen)) return;
+
             track = BotMusicSearch.resolveTrackForPlayback(initialTrack);
             if (!isStillActive(gen)) return;
             this.activeTrack = track;
@@ -218,12 +250,20 @@ public final class BotAudioStreamer {
                 completedNormally = isStillActive(gen);
             } else {
                 String streamUrl = track.url;
+                boolean isVolnorez = DjBotCatalogs.VolnorezMetadataReader.supports(streamUrl);
                 boolean isHls = streamUrl.toLowerCase(Locale.ROOT).contains(".m3u8");
                 if (isHls) {
                     streamUrl = resolveHlsStreamUrl(streamUrl, track.referer);
                     if (!isStillActive(gen)) return;
                 } else {
-                    startIcyMetadataPoller(streamUrl, gen);
+                    if (isVolnorez) {
+                        startVolnorezMetadataReader(streamUrl, gen);
+                    }
+                    streamUrl = resolveRedirectedUrl(streamUrl, track.referer);
+                    if (!isStillActive(gen)) return;
+                    if (!isVolnorez) {
+                        startIcyMetadataPoller(streamUrl, gen);
+                    }
                 }
                 decodeAndStreamUrl(streamUrl, track.referer, gen);
                 completedNormally = isStillActive(gen);
@@ -235,7 +275,14 @@ public final class BotAudioStreamer {
             }
         } finally {
             stopIcyPoller();
+            stopVolnorezReader();
             flushEmptyAudioBlock();
+            if (introWavFile != null && introWavFile.exists()) {
+                try {
+                    introWavFile.delete();
+                } catch (Throwable ignored) {
+                }
+            }
             if (tempFile != null && tempFile.exists()) {
                 try {
                     tempFile.delete();
@@ -252,6 +299,85 @@ public final class BotAudioStreamer {
                     } catch (Throwable ignored) {
                     }
                 }
+            }
+        }
+    }
+
+    private String resolveRedirectedUrl(String urlStr, String referer) {
+        String current = urlStr;
+        for (int hops = 0; hops < 6; hops++) {
+            HttpURLConnection conn = null;
+            try {
+                conn = (HttpURLConnection) new URL(current).openConnection();
+                conn.setInstanceFollowRedirects(false);
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                conn.setRequestMethod("GET");
+                conn.setRequestProperty("User-Agent", BotMusicSearch.USER_AGENT);
+                if (!TextUtils.isEmpty(referer)) {
+                    conn.setRequestProperty("Referer", referer);
+                }
+                int code = conn.getResponseCode();
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String loc = conn.getHeaderField("Location");
+                    if (TextUtils.isEmpty(loc)) return current;
+                    current = new URL(new URL(current), loc).toString();
+                    continue;
+                }
+                return current;
+            } catch (Throwable ignored) {
+                return current;
+            } finally {
+                if (conn != null) {
+                    try {
+                        conn.disconnect();
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }
+        }
+        return current;
+    }
+
+    private void startVolnorezMetadataReader(String streamUrl, int gen) {
+        stopVolnorezReader();
+        DjBotCatalogs.VolnorezMetadataReader reader = new DjBotCatalogs.VolnorezMetadataReader(
+                streamUrl,
+                new DjBotCatalogs.VolnorezMetadataReader.Callback() {
+                    @Override
+                    public void onMetadata(String djAndTrack) {
+                        if (!isStillActive(gen)) return;
+                        OnMetadataListener l = metadataListener;
+                        if (l != null && !TextUtils.isEmpty(djAndTrack)) {
+                            l.onStreamTitleChanged(djAndTrack);
+                        }
+                    }
+
+                    @Override
+                    public void onListeners(int count) {
+                        if (!isStillActive(gen)) return;
+                        OnListenersListener l = listenersListener;
+                        if (l != null) {
+                            l.onListenersChanged(count);
+                        }
+                    }
+                });
+        synchronized (threadLock) {
+            this.volnReader = reader;
+        }
+        reader.start();
+    }
+
+    private void stopVolnorezReader() {
+        DjBotCatalogs.VolnorezMetadataReader vr;
+        synchronized (threadLock) {
+            vr = this.volnReader;
+            this.volnReader = null;
+        }
+        if (vr != null) {
+            try {
+                vr.stop();
+            } catch (Throwable ignored) {
             }
         }
     }

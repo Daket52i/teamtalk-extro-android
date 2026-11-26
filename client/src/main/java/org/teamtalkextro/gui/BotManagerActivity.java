@@ -35,11 +35,14 @@ import org.teamtalkextro.backend.TeamTalkConnectionListener;
 import org.teamtalkextro.backend.TeamTalkService;
 import org.teamtalkextro.bot.BotConfig;
 import org.teamtalkextro.bot.BotMusicSearch;
+import org.teamtalkextro.bot.DjBotCatalogs;
+import org.teamtalkextro.bot.DjBotEpg;
 import org.teamtalkextro.bot.EmbeddedMediaBot;
 import org.teamtalkextro.data.ServerEntry;
 
 /**
- * UI controller for the built-in Android TTMediaBot (inspired by Daket52i/TTMediaBot-by-dancho).
+ * UI controller for the embedded Android DJ Bot (TT-DJbot analog: Welcome, Guard,
+ * Music, FM Radio, Volnorez, Russian Live TV + XMLTV EPG, and TTS /vo).
  */
 public class BotManagerActivity extends AppCompatActivity
         implements TeamTalkConnectionListener, EmbeddedMediaBot.StateListener {
@@ -48,8 +51,7 @@ public class BotManagerActivity extends AppCompatActivity
     private static final String[] SERVICE_KEYS = {
             BotMusicSearch.SERVICE_HITMO,
             BotMusicSearch.SERVICE_MF,
-            BotMusicSearch.SERVICE_RUTUBE,
-            BotMusicSearch.SERVICE_RADIO
+            BotMusicSearch.SERVICE_RUTUBE
     };
 
     private TeamTalkConnection mConnection;
@@ -60,6 +62,7 @@ public class BotManagerActivity extends AppCompatActivity
     private boolean updatingServiceSpinner = false;
     private boolean passwordVisible = false;
 
+    private View cardUpgradeNotice;
     private TextView tvStatusBadge;
     private TextView tvNowPlaying;
     private Button btnToggleBot;
@@ -68,6 +71,10 @@ public class BotManagerActivity extends AppCompatActivity
     private Button btnPause;
     private Button btnNext;
     private Button btnStopTrack;
+    private Button btnQuickRadio;
+    private Button btnQuickVoln;
+    private Button btnQuickTv;
+    private Button btnQuickPop;
     private TextView tvVolumeLabel;
     private SeekBar seekVolume;
     private Spinner spinnerQuickService;
@@ -90,10 +97,21 @@ public class BotManagerActivity extends AppCompatActivity
     private EditText etChannel;
     private EditText etChannelPass;
     private Spinner spinnerDefaultService;
-    private EditText etAdmins;
-    private MaterialSwitch switchChannelCmds;
-    private MaterialSwitch switchAutoStatus;
+
+    private MaterialSwitch switchWelcomeEnabled;
     private EditText etWelcome;
+
+    private MaterialSwitch switchGuardEnabled;
+    private MaterialSwitch switchGuardEmptyNick;
+    private MaterialSwitch switchGuardMat;
+    private MaterialSwitch switchGuardBotnet;
+    private MaterialSwitch switchGuardBan;
+    private EditText etTrustedUsers;
+
+    private MaterialSwitch switchVoiceAnnounce;
+    private MaterialSwitch switchAutoStatus;
+    private MaterialSwitch switchChannelCmds;
+    private EditText etAdmins;
     private Button btnSaveProfile;
 
     private TextView tvLog;
@@ -112,6 +130,7 @@ public class BotManagerActivity extends AppCompatActivity
         }
 
         initViews();
+        updateUpgradeNoticeVisibility();
         setupServiceSpinners();
         loadProfilesAndPopulate(null);
         wireListeners();
@@ -123,6 +142,7 @@ public class BotManagerActivity extends AppCompatActivity
     }
 
     private void initViews() {
+        cardUpgradeNotice = findViewById(R.id.card_djbot_upgrade_notice);
         tvStatusBadge = findViewById(R.id.bot_status_badge);
         tvNowPlaying = findViewById(R.id.bot_now_playing);
         btnToggleBot = findViewById(R.id.btn_bot_toggle);
@@ -131,6 +151,10 @@ public class BotManagerActivity extends AppCompatActivity
         btnPause = findViewById(R.id.btn_bot_pause);
         btnNext = findViewById(R.id.btn_bot_next);
         btnStopTrack = findViewById(R.id.btn_bot_stop);
+        btnQuickRadio = findViewById(R.id.btn_bot_quick_radio);
+        btnQuickVoln = findViewById(R.id.btn_bot_quick_voln);
+        btnQuickTv = findViewById(R.id.btn_bot_quick_tv);
+        btnQuickPop = findViewById(R.id.btn_bot_quick_pop);
         tvVolumeLabel = findViewById(R.id.tv_bot_volume_label);
         seekVolume = findViewById(R.id.seek_bot_volume);
         spinnerQuickService = findViewById(R.id.spinner_bot_quick_service);
@@ -153,22 +177,38 @@ public class BotManagerActivity extends AppCompatActivity
         etChannel = findViewById(R.id.et_bot_channel);
         etChannelPass = findViewById(R.id.et_bot_channel_pass);
         spinnerDefaultService = findViewById(R.id.spinner_bot_default_service);
-        etAdmins = findViewById(R.id.et_bot_admins);
-        switchChannelCmds = findViewById(R.id.switch_bot_channel_cmds);
-        switchAutoStatus = findViewById(R.id.switch_bot_auto_status);
+
+        switchWelcomeEnabled = findViewById(R.id.switch_bot_welcome_enabled);
         etWelcome = findViewById(R.id.et_bot_welcome);
+
+        switchGuardEnabled = findViewById(R.id.switch_bot_guard_enabled);
+        switchGuardEmptyNick = findViewById(R.id.switch_bot_guard_empty_nick);
+        switchGuardMat = findViewById(R.id.switch_bot_guard_mat);
+        switchGuardBotnet = findViewById(R.id.switch_bot_guard_botnet);
+        switchGuardBan = findViewById(R.id.switch_bot_guard_ban);
+        etTrustedUsers = findViewById(R.id.et_bot_trusted_users);
+
+        switchVoiceAnnounce = findViewById(R.id.switch_bot_voice_announce);
+        switchAutoStatus = findViewById(R.id.switch_bot_auto_status);
+        switchChannelCmds = findViewById(R.id.switch_bot_channel_cmds);
+        etAdmins = findViewById(R.id.et_bot_admins);
         btnSaveProfile = findViewById(R.id.btn_bot_save_profile);
 
         tvLog = findViewById(R.id.tv_bot_log);
         btnClearLog = findViewById(R.id.btn_bot_clear_log);
     }
 
+    private void updateUpgradeNoticeVisibility() {
+        if (cardUpgradeNotice != null) {
+            cardUpgradeNotice.setVisibility(BotConfig.hasSavedProfiles(this) ? View.GONE : View.VISIBLE);
+        }
+    }
+
     private void setupServiceSpinners() {
         String[] labels = {
                 getString(R.string.bot_service_hitmo),
                 getString(R.string.bot_service_mf),
-                getString(R.string.bot_service_rt),
-                getString(R.string.bot_service_radio)
+                getString(R.string.bot_service_rt)
         };
         ArrayAdapter<String> quickAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels);
         quickAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -186,7 +226,7 @@ public class BotManagerActivity extends AppCompatActivity
         List<String> names = new ArrayList<>();
         for (int i = 0; i < profiles.size(); i++) {
             BotConfig c = profiles.get(i);
-            String label = !TextUtils.isEmpty(c.profileName) ? c.profileName : ("Bot #" + (i + 1));
+            String label = !TextUtils.isEmpty(c.profileName) ? c.profileName : ("DJ Bot #" + (i + 1));
             if (!TextUtils.isEmpty(c.host)) {
                 label += " (" + c.host + ")";
             }
@@ -225,10 +265,22 @@ public class BotManagerActivity extends AppCompatActivity
         updatingServiceSpinner = true;
         spinnerQuickService.setSelection(svcIdx);
         updatingServiceSpinner = false;
-        etAdmins.setText(cfg.adminUsers);
-        switchChannelCmds.setChecked(cfg.allowChannelCommands);
+
+        switchWelcomeEnabled.setChecked(cfg.welcomeEnabled);
+        etWelcome.setText(cfg.welcomeText);
+
+        switchGuardEnabled.setChecked(cfg.guardEnabled);
+        switchGuardEmptyNick.setChecked(cfg.guardKickEmptyNick);
+        switchGuardMat.setChecked(cfg.guardMatCheck);
+        switchGuardBotnet.setChecked(cfg.guardBotnetNickCheck);
+        switchGuardBan.setChecked(cfg.guardBanOnViolation);
+        etTrustedUsers.setText(cfg.trustedUsers);
+
+        switchVoiceAnnounce.setChecked(cfg.voiceAnnounceTrack);
         switchAutoStatus.setChecked(cfg.autoStatusTrack);
-        etWelcome.setText(cfg.welcomeMessage);
+        switchChannelCmds.setChecked(cfg.allowChannelCommands);
+        etAdmins.setText(cfg.adminUsers);
+
         seekVolume.setProgress(cfg.volume);
         tvVolumeLabel.setText(getString(R.string.bot_label_volume, cfg.volume));
     }
@@ -248,10 +300,22 @@ public class BotManagerActivity extends AppCompatActivity
         int defIdx = Math.max(0, Math.min(SERVICE_KEYS.length - 1, spinnerDefaultService.getSelectedItemPosition()));
         cfg.defaultService = SERVICE_KEYS[defIdx];
         cfg.volume = seekVolume.getProgress();
-        cfg.adminUsers = textOf(etAdmins);
-        cfg.allowChannelCommands = switchChannelCmds.isChecked();
+
+        cfg.welcomeEnabled = switchWelcomeEnabled.isChecked();
+        cfg.welcomeText = textOf(etWelcome);
+
+        cfg.guardEnabled = switchGuardEnabled.isChecked();
+        cfg.guardKickEmptyNick = switchGuardEmptyNick.isChecked();
+        cfg.guardMatCheck = switchGuardMat.isChecked();
+        cfg.guardBotnetNickCheck = switchGuardBotnet.isChecked();
+        cfg.guardBanOnViolation = switchGuardBan.isChecked();
+        cfg.trustedUsers = textOf(etTrustedUsers);
+
+        cfg.voiceAnnounceTrack = switchVoiceAnnounce.isChecked();
         cfg.autoStatusTrack = switchAutoStatus.isChecked();
-        cfg.welcomeMessage = textOf(etWelcome);
+        cfg.allowChannelCommands = switchChannelCmds.isChecked();
+        cfg.adminUsers = textOf(etAdmins);
+
         cfg.normalize();
         return cfg;
     }
@@ -275,6 +339,7 @@ public class BotManagerActivity extends AppCompatActivity
                 }
                 BotConfig.upsert(this, cfg);
                 selectedProfile = cfg;
+                updateUpgradeNoticeVisibility();
                 loadProfilesAndPopulate(cfg.id);
                 svc.startEmbeddedBot(cfg);
                 Toast.makeText(this, R.string.bot_toast_started, Toast.LENGTH_SHORT).show();
@@ -293,6 +358,15 @@ public class BotManagerActivity extends AppCompatActivity
 
         btnStopTrack.setOnClickListener(v -> {
             if (boundBot != null) boundBot.stopPlayback();
+        });
+
+        btnQuickRadio.setOnClickListener(v -> showRadioPickerDialog());
+        btnQuickVoln.setOnClickListener(v -> showVolnorezPickerDialog());
+        btnQuickTv.setOnClickListener(v -> showTvPickerDialog());
+        btnQuickPop.setOnClickListener(v -> {
+            if (!ensureBotRunning()) return;
+            boundBot.playRandomPopFromUi();
+            Toast.makeText(this, R.string.djbot_toast_pop_loading, Toast.LENGTH_SHORT).show();
         });
 
         seekVolume.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -361,8 +435,9 @@ public class BotManagerActivity extends AppCompatActivity
 
         btnProfileNew.setOnClickListener(v -> {
             BotConfig fresh = BotConfig.createDefault();
-            fresh.profileName = "TTMediaBot " + (profiles.size() + 1);
+            fresh.profileName = "DJ Bot " + (profiles.size() + 1);
             BotConfig.upsert(this, fresh);
+            updateUpgradeNoticeVisibility();
             loadProfilesAndPopulate(fresh.id);
             Toast.makeText(this, R.string.bot_toast_profile_created, Toast.LENGTH_SHORT).show();
         });
@@ -395,6 +470,7 @@ public class BotManagerActivity extends AppCompatActivity
             BotConfig cfg = readConfigFromFields();
             BotConfig.upsert(this, cfg);
             selectedProfile = cfg;
+            updateUpgradeNoticeVisibility();
             loadProfilesAndPopulate(cfg.id);
             Toast.makeText(this, R.string.bot_toast_profile_saved, Toast.LENGTH_SHORT).show();
         });
@@ -408,17 +484,92 @@ public class BotManagerActivity extends AppCompatActivity
         });
     }
 
+    private boolean ensureBotRunning() {
+        TeamTalkService svc = getService();
+        if (svc == null || !svc.isEmbeddedBotActive() || boundBot == null) {
+            Toast.makeText(this, R.string.bot_err_not_running, Toast.LENGTH_SHORT).show();
+            return false;
+        }
+        return true;
+    }
+
+    private void showRadioPickerDialog() {
+        if (!ensureBotRunning()) return;
+        List<BotMusicSearch.BotTrack> stations = DjBotCatalogs.BUILT_IN_RADIO;
+        CharSequence[] items = new CharSequence[stations.size()];
+        for (int i = 0; i < stations.size(); i++) {
+            items[i] = (i + 1) + ". " + stations.get(i).title;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.djbot_dialog_radio_title)
+                .setItems(items, (d, which) -> {
+                    if (which >= 0 && which < stations.size() && boundBot != null) {
+                        boundBot.playTrackDirectFromUi(stations.get(which));
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void showVolnorezPickerDialog() {
+        if (!ensureBotRunning()) return;
+        Toast.makeText(this, R.string.djbot_toast_voln_loading, Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            List<BotMusicSearch.BotTrack> stations = DjBotCatalogs.getVolnorezStations(false);
+            CharSequence[] items = new CharSequence[stations.size()];
+            for (int i = 0; i < stations.size(); i++) {
+                items[i] = (i + 1) + ". " + stations.get(i).title;
+            }
+            runOnUiThread(() -> {
+                if (isFinishing()) return;
+                new MaterialAlertDialogBuilder(BotManagerActivity.this)
+                        .setTitle(R.string.djbot_dialog_voln_title)
+                        .setItems(items, (d, which) -> {
+                            if (which >= 0 && which < stations.size() && boundBot != null) {
+                                boundBot.playTrackDirectFromUi(stations.get(which));
+                            }
+                        })
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
+            });
+        }, "Extro-VolnList").start();
+    }
+
+    private void showTvPickerDialog() {
+        if (!ensureBotRunning()) return;
+        List<BotMusicSearch.BotTrack> channels = DjBotCatalogs.BUILT_IN_TV;
+        DjBotEpg epg = boundBot != null ? boundBot.getEpg() : null;
+        if (epg != null) epg.ensureLoadedAsync();
+        CharSequence[] items = new CharSequence[channels.size()];
+        for (int i = 0; i < channels.size(); i++) {
+            String title = channels.get(i).title;
+            String label = (i + 1) + ". " + title;
+            if (epg != null && epg.isLoaded()) {
+                DjBotEpg.EpgInfo info = epg.getNow(title);
+                if (info != null && !TextUtils.isEmpty(info.title)) {
+                    label += " — " + info.title;
+                }
+            }
+            items[i] = label;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.djbot_dialog_tv_title)
+                .setItems(items, (d, which) -> {
+                    if (which >= 0 && which < channels.size() && boundBot != null) {
+                        boundBot.playTrackDirectFromUi(channels.get(which));
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
     private void triggerSearchPlay() {
         String query = textOf(etSearch);
         if (TextUtils.isEmpty(query)) {
             Toast.makeText(this, R.string.bot_hint_search, Toast.LENGTH_SHORT).show();
             return;
         }
-        TeamTalkService svc = getService();
-        if (svc == null || !svc.isEmbeddedBotActive() || boundBot == null) {
-            Toast.makeText(this, R.string.bot_err_not_running, Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (!ensureBotRunning()) return;
         int idx = Math.max(0, Math.min(SERVICE_KEYS.length - 1, spinnerQuickService.getSelectedItemPosition()));
         boundBot.playQueryFromUi(SERVICE_KEYS[idx], query);
     }
@@ -434,8 +585,8 @@ public class BotManagerActivity extends AppCompatActivity
         etTcpPort.setText(String.valueOf(srv.tcpport > 0 ? srv.tcpport : 10333));
         etUdpPort.setText(String.valueOf(srv.udpport > 0 ? srv.udpport : (srv.tcpport > 0 ? srv.tcpport : 10333)));
         switchEncrypted.setChecked(srv.encrypted);
-        if (TextUtils.isEmpty(textOf(etProfileName)) || "TTMediaBot".equals(textOf(etProfileName))) {
-            etProfileName.setText(!TextUtils.isEmpty(srv.servername) ? ("Bot — " + srv.servername) : srv.ipaddr);
+        if (TextUtils.isEmpty(textOf(etProfileName)) || BotConfig.DEFAULT_PROFILE_NAME.equals(textOf(etProfileName))) {
+            etProfileName.setText(!TextUtils.isEmpty(srv.servername) ? ("DJ Bot — " + srv.servername) : srv.ipaddr);
         }
         if (TextUtils.isEmpty(textOf(etUsername)) && !TextUtils.isEmpty(srv.username)) {
             etUsername.setText(srv.username);
@@ -470,11 +621,7 @@ public class BotManagerActivity extends AppCompatActivity
                 getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
             } catch (Throwable ignored) {
             }
-            TeamTalkService svc = getService();
-            if (svc == null || !svc.isEmbeddedBotActive() || boundBot == null) {
-                Toast.makeText(this, R.string.bot_err_not_running, Toast.LENGTH_SHORT).show();
-                return;
-            }
+            if (!ensureBotRunning()) return;
             boundBot.playLocalFileFromUi(uri, queryFileName(uri));
         }
     }
@@ -556,18 +703,23 @@ public class BotManagerActivity extends AppCompatActivity
         boolean active = snap.state != EmbeddedMediaBot.State.STOPPED;
         btnToggleBot.setText(active ? R.string.bot_action_stop : R.string.bot_action_start);
 
-        if (!TextUtils.isEmpty(snap.nowPlaying)) {
-            String line = "🎵 " + snap.nowPlaying;
+        if (!TextUtils.isEmpty(snap.epgSummary)) {
+            tvNowPlaying.setText(snap.epgSummary);
+        } else if (!TextUtils.isEmpty(snap.nowPlaying)) {
+            StringBuilder line = new StringBuilder("🎵 ").append(snap.nowPlaying);
             if (!TextUtils.isEmpty(snap.liveStreamTitle)) {
-                line += "\n📻 " + snap.liveStreamTitle;
+                line.append("\n📻 ").append(snap.liveStreamTitle);
+            }
+            if (snap.listenersCount >= 0) {
+                line.append(" • 👥 ").append(snap.listenersCount);
             }
             if (snap.paused) {
-                line += " (" + getString(R.string.karaoke_paused_label) + ")";
+                line.append(" (").append(getString(R.string.karaoke_paused_label)).append(")");
             }
             if (snap.queueSize > 0) {
-                line += " • " + getString(R.string.bot_queue_count, snap.queueSize);
+                line.append(" • ").append(getString(R.string.bot_queue_count, snap.queueSize));
             }
-            tvNowPlaying.setText(line);
+            tvNowPlaying.setText(line.toString());
         } else {
             tvNowPlaying.setText(R.string.bot_now_playing_idle);
         }

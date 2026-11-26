@@ -18,10 +18,11 @@
 - **Автостатус:** автоматическое отображение `🎤 <Название трека>` в статусе пользователя и возврат прежнего статуса при остановке.
 - **Встроенный саундпад (6 студийных SFX):** Аплодисменты, Барабанная дробь, Фанфары, Джингл / Эфир, Звонок / Дзинь, Сигнал / Баззер — доступны даже без запущенного караоке.
 
-### 🤖 Встроенный музыкальный бот с телефона (TTMediaBot Extro)
-- Автономный музыкальный и радиобот (на базе `Daket52i/TTMediaBot-by-dancho`), работающий прямо на Android через отдельный экземпляр `TeamTalk5` без помех вашему подключению и микрофону.
-- Поиск и воспроизведение из **Хитмо (`hitmo`)**, **Музфонда (`mf`)**, **Rutube (`rt`)**, **16 встроенных FM-радиостанций + Radio Browser (`radio`)**, прямых ссылок и локальных файлов с телефона.
-- Полный набор чат-команд (`p`, `sr`, `sl`, `sv`, `r`, `sp`, `s`, `n`, `b`, `q`, `c`, `v`, `sf`, `sb`, `now`, `j`, `st`, `h`), очередь, перемотка, ICY-названия эфира, автостатус `🎵`, автопереподключение и профили ботов с сохранением в JSON-бэкапе.
+### 🎧 Встроенный DJ Bot (аналог приветственного бота TT-DJbot, v5.35.0)
+- Полностью заменил прежний `TTMediaBot`: работает на независимом экземпляре `TeamTalk5` внутри `TeamTalkService` без помех вашему подключению и микрофону (**старые профили TTMediaBot не переносятся — настройте DJ Bot заново**).
+- **Приветствие и охрана Guard:** автоматическое приветствие новых участников (`/welcome`), защита от пустых ников, мата и ботнет-ников (`/set guard on|off`), список доверенных пользователей и админов.
+- **Музыка, Радио, Волнорез и ТВ + EPG:** **Хитмо (`hitmo`)**, **Музфонд (`mf`)**, **Rutube (`rt`)**, случайные русские хиты **`/pop`**, **32+ российских FM-радиостанций + Radio Browser** (с ICY-метаданными), живые станции **Волнореза (`/voln`)** с WebSocket-треком и счётчиком слушателей, **33 российских ТВ-канала (`/tv`)** с проверкой геоблока и потоковой **XMLTV EPG** телепрограммой (время МСК).
+- **Полный набор чат-команд `TT-DJbot`:** `/play`, `/stop`, `/skip`, `/pause`, `/v`, `/sf`, `/sb`, `/playlist`, `/radio`, `/voln`, `/tv`, `/tv epg`, `/now`, `/pop`, `/sv`, `/fav`, `/vo` (TTS-озвучка треков в эфир бота), `/welcome`, `/settings`, `/set`, `/j`, `/h`. Профили сохраняются в JSON-бэкапе (`djbot_profiles`).
 
 ### 👀 Просмотр онлайна сервера без входа (Server Peek)
 - Кнопка просмотра прямо на каждой карточке сервера в 1 касание — узнайте, кто сейчас на сервере и в каких каналах, **не заходя в канал** и не прерывая текущее активное подключение.
@@ -60,7 +61,7 @@
 ├── client/                         # Android-приложение (Java 17, Material 3)
 │   ├── src/main/java/org/teamtalkextro/
 │   │   ├── backend/                # TeamTalkService, VoiceChanger, KaraokeMixer, SoundboardEngine, ServerPeekHelper
-│   │   ├── bot/                    # EmbeddedMediaBot, BotAudioStreamer, BotMusicSearch, BotConfig
+│   │   ├── bot/                    # EmbeddedMediaBot (DJ Bot), BotAudioStreamer, BotMusicSearch, DjBotCatalogs, DjBotEpg, BotConfig
 │   │   ├── data/                   # Preferences, ServerEntry, SettingsBackupManager
 │   │   └── gui/                    # MainActivity, ServerListActivity, BotManagerActivity, PreferencesActivity и др.
 │   └── libs/TeamTalk5.jar          # Java API TeamTalk 5 SDK
@@ -95,4 +96,4 @@ cd client
 ## 🙏 Благодарности (Credits)
 - Основано на **[BearWare/TeamTalk5](https://github.com/BearWare/TeamTalk5)** (TeamTalk 5 SDK и базовый клиент).
 - Основано на **[nekit-wq/Teamtalk-next](https://github.com/nekit-wq/Teamtalk-next)** (расширенный Android-клиент TeamTalk Next).
-- Встроенный музыкальный бот вдохновлён **[Daket52i/TTMediaBot-by-dancho](https://github.com/Daket52i/TTMediaBot-by-dancho)**.
+- Встроенный DJ Bot вдохновлён **[Daket52i/TT-DJbot](https://github.com/Daket52i/TT-DJbot)** (форк `teamtalk-universal-plugin`).

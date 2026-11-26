@@ -443,9 +443,9 @@ public final class SettingsBackupManager {
             root.add("android_preferences", androidPrefs);
             root.add("android_preference_types", androidPrefTypes);
 
-            // 5. Embedded TTMediaBot profiles
+            // 5. Embedded DJ Bot profiles (fresh key so legacy TTMediaBot configs do not carry over)
             try {
-                root.add("bot_profiles", org.teamtalkextro.bot.BotConfig.toJsonArray(context));
+                root.add("djbot_profiles", org.teamtalkextro.bot.BotConfig.toJsonArray(context));
             } catch (Throwable ignored) {
             }
 
@@ -692,10 +692,10 @@ public final class SettingsBackupManager {
                 prefsRestored += AfkAndQuickPhrases.importQuickPhrasesJson(context, root.getAsJsonArray("quick_phrases"));
             }
 
-            // 5. Restore embedded TTMediaBot profiles (backwards-compatible)
-            if (root.has("bot_profiles") && root.get("bot_profiles").isJsonArray()) {
+            // 5. Restore embedded DJ Bot profiles (legacy TTMediaBot bot_profiles intentionally not imported)
+            if (root.has("djbot_profiles") && root.get("djbot_profiles").isJsonArray()) {
                 try {
-                    int botAdded = org.teamtalkextro.bot.BotConfig.importJsonArray(context, root.getAsJsonArray("bot_profiles"));
+                    int botAdded = org.teamtalkextro.bot.BotConfig.importJsonArray(context, root.getAsJsonArray("djbot_profiles"));
                     prefsRestored += botAdded;
                 } catch (Throwable ignored) {
                 }

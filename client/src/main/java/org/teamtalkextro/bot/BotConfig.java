@@ -2,7 +2,6 @@ package org.teamtalkextro.bot;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.text.TextUtils;
 import androidx.preference.PreferenceManager;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -12,18 +11,30 @@ import com.google.gson.reflect.TypeToken;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
- * Persistent configuration profile for the built-in Android TTMediaBot.
+ * Persistent configuration profile for the embedded Android DJ Bot
+ * (analog of TT-DJbot / welcome, guard, music, radio, Volnorez, TV + EPG).
+ *
+ * Uses fresh SharedPreferences keys ({@code extro_djbot_*}) so legacy TTMediaBot
+ * profiles are not silently carried over after the bot replacement.
  */
 public class BotConfig {
 
-    public static final String PREF_BOT_PROFILES_JSON = "extro_bot_profiles_json";
-    public static final String PREF_BOT_ACTIVE_ID = "extro_bot_active_id";
+    public static final String PREF_BOT_PROFILES_JSON = "extro_djbot_profiles_json";
+    public static final String PREF_BOT_ACTIVE_ID = "extro_djbot_active_id";
+    public static final String PREF_BOT_FAVORITES_JSON = "extro_djbot_favorites_json";
+
+    public static final String DEFAULT_PROFILE_NAME = "DJ Bot";
+    public static final String DEFAULT_NICKNAME = "!DJ Bot";
+    public static final String DEFAULT_WELCOME_TEXT = "Добро пожаловать на сервер! Команды бота: /h";
 
     public String id = UUID.randomUUID().toString();
-    public String profileName = "TTMediaBot";
+    public String profileName = DEFAULT_PROFILE_NAME;
+
+    // Connection
     public String host = "";
     public int tcpPort = 10333;
     public int udpPort = 10333;
@@ -31,20 +42,55 @@ public class BotConfig {
     public boolean verifyPeer = false;
     public String username = "";
     public String password = "";
-    public String nickname = "TTMediaBot";
+    public String nickname = DEFAULT_NICKNAME;
     public String channel = "/";
     public String channelPassword = "";
-    public String defaultService = "hitmo";
+
+    // Playback
+    public String defaultService = BotMusicSearch.SERVICE_HITMO;
     public int volume = 50;
     public boolean autoStatusTrack = true;
+    public boolean voiceAnnounceTrack = false;
+
+    // Welcome & Greeting
+    public boolean welcomeEnabled = true;
+    public String welcomeText = DEFAULT_WELCOME_TEXT;
+
+    // Guard (anti-botnet / anti-abuse protection)
+    public boolean guardEnabled = false;
+    public boolean guardKickEmptyNick = true;
+    public boolean guardMatCheck = true;
+    public boolean guardBotnetNickCheck = true;
+    public boolean guardBanOnViolation = false;
+    public int guardMaxNickLen = 40;
+    public String trustedUsers = "";
+
+    // Permissions & announcements
+    public String adminUsers = "";
     public boolean allowChannelCommands = true;
     public boolean allowPrivateCommands = true;
     public boolean sendChannelAnnouncements = true;
-    public String adminUsers = "";
-    public String welcomeMessage = "";
+
+    public static final class FavoriteItem {
+        public String label;
+        public String url;
+        public String service;
+        public boolean isLive;
+
+        public FavoriteItem() {
+        }
+
+        public FavoriteItem(String label, String url, String service, boolean isLive) {
+            this.label = label != null ? label.trim() : "";
+            this.url = url != null ? url.trim() : "";
+            this.service = service != null ? service.trim() : "";
+            this.isLive = isLive;
+        }
+    }
 
     private static final Gson GSON = new Gson();
     private static final Type LIST_TYPE = new TypeToken<List<BotConfig>>() {}.getType();
+    private static final Type FAV_LIST_TYPE = new TypeToken<List<FavoriteItem>>() {}.getType();
 
     public BotConfig() {
     }
@@ -66,61 +112,107 @@ public class BotConfig {
         c.defaultService = this.defaultService;
         c.volume = this.volume;
         c.autoStatusTrack = this.autoStatusTrack;
+        c.voiceAnnounceTrack = this.voiceAnnounceTrack;
+        c.welcomeEnabled = this.welcomeEnabled;
+        c.welcomeText = this.welcomeText;
+        c.guardEnabled = this.guardEnabled;
+        c.guardKickEmptyNick = this.guardKickEmptyNick;
+        c.guardMatCheck = this.guardMatCheck;
+        c.guardBotnetNickCheck = this.guardBotnetNickCheck;
+        c.guardBanOnViolation = this.guardBanOnViolation;
+        c.guardMaxNickLen = this.guardMaxNickLen;
+        c.trustedUsers = this.trustedUsers;
+        c.adminUsers = this.adminUsers;
         c.allowChannelCommands = this.allowChannelCommands;
         c.allowPrivateCommands = this.allowPrivateCommands;
         c.sendChannelAnnouncements = this.sendChannelAnnouncements;
-        c.adminUsers = this.adminUsers;
-        c.welcomeMessage = this.welcomeMessage;
         return c;
     }
 
     public void normalize() {
-        if (TextUtils.isEmpty(id)) {
+        if (isBlank(id)) {
             id = UUID.randomUUID().toString();
         }
-        if (TextUtils.isEmpty(profileName)) {
-            profileName = !TextUtils.isEmpty(host) ? host : "TTMediaBot";
-        }
         host = host != null ? host.trim() : "";
+        if (isBlank(profileName)) {
+            profileName = !host.isEmpty() ? host : DEFAULT_PROFILE_NAME;
+        } else {
+            profileName = profileName.trim();
+        }
         if (tcpPort <= 0 || tcpPort > 65535) {
             tcpPort = 10333;
         }
         if (udpPort <= 0 || udpPort > 65535) {
             udpPort = tcpPort;
         }
-        username = username != null ? username : "";
+        username = username != null ? username.trim() : "";
         password = password != null ? password : "";
-        if (TextUtils.isEmpty(nickname)) {
-            nickname = "TTMediaBot";
+        if (isBlank(nickname)) {
+            nickname = DEFAULT_NICKNAME;
+        } else {
+            nickname = nickname.trim();
         }
-        if (TextUtils.isEmpty(channel)) {
+        if (isBlank(channel)) {
             channel = "/";
+        } else {
+            channel = channel.trim();
         }
         channelPassword = channelPassword != null ? channelPassword : "";
-        if (!"hitmo".equals(defaultService) && !"mf".equals(defaultService)
-                && !"rt".equals(defaultService) && !"radio".equals(defaultService)) {
-            defaultService = "hitmo";
+
+        if (!BotMusicSearch.SERVICE_HITMO.equals(defaultService)
+                && !BotMusicSearch.SERVICE_MF.equals(defaultService)
+                && !BotMusicSearch.SERVICE_RUTUBE.equals(defaultService)) {
+            defaultService = BotMusicSearch.SERVICE_HITMO;
         }
         volume = Math.max(0, Math.min(100, volume));
+        welcomeText = welcomeText != null ? welcomeText.trim() : "";
+        if (guardMaxNickLen < 0) {
+            guardMaxNickLen = 0;
+        } else if (guardMaxNickLen > 200) {
+            guardMaxNickLen = 200;
+        }
+        trustedUsers = trustedUsers != null ? trustedUsers.trim() : "";
         adminUsers = adminUsers != null ? adminUsers.trim() : "";
-        welcomeMessage = welcomeMessage != null ? welcomeMessage.trim() : "";
     }
 
     public boolean isAdmin(String senderUsername) {
-        if (TextUtils.isEmpty(adminUsers)) {
+        if (isBlank(adminUsers)) {
             return true;
         }
-        if (TextUtils.isEmpty(senderUsername)) {
-            return false;
+        return matchesCsvList(adminUsers, senderUsername);
+    }
+
+    public boolean isTrusted(String userUsername, String userNickname) {
+        if (!isBlank(adminUsers) && matchesCsvList(adminUsers, userUsername)) {
+            return true;
         }
-        String needle = senderUsername.trim().toLowerCase();
-        String[] parts = adminUsers.split("[,;\\s]+");
-        for (String p : parts) {
-            if (!TextUtils.isEmpty(p) && p.trim().toLowerCase().equals(needle)) {
+        if (!isBlank(trustedUsers)) {
+            if (matchesCsvList(trustedUsers, userUsername)) {
+                return true;
+            }
+            if (matchesCsvList(trustedUsers, userNickname)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean matchesCsvList(String csv, String candidate) {
+        if (isBlank(csv) || isBlank(candidate)) {
+            return false;
+        }
+        String needle = candidate.trim().toLowerCase(Locale.ROOT);
+        String[] parts = csv.split("[,;\\n]+");
+        for (String p : parts) {
+            if (!isBlank(p) && p.trim().toLowerCase(Locale.ROOT).equals(needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.trim().isEmpty();
     }
 
     public static BotConfig createDefault() {
@@ -129,11 +221,28 @@ public class BotConfig {
         return cfg;
     }
 
-    public static List<BotConfig> loadAll(Context context) {
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
-        String json = prefs.getString(PREF_BOT_PROFILES_JSON, "");
+    // --- Pure JSON helpers (unit-testable without Android Context) ---
+
+    public static String serializeProfilesJson(List<BotConfig> profiles) {
+        List<BotConfig> clean = new ArrayList<>();
+        if (profiles != null) {
+            for (BotConfig c : profiles) {
+                if (c != null) {
+                    BotConfig copy = c.copy();
+                    copy.normalize();
+                    clean.add(copy);
+                }
+            }
+        }
+        if (clean.isEmpty()) {
+            clean.add(createDefault());
+        }
+        return GSON.toJson(clean, LIST_TYPE);
+    }
+
+    public static List<BotConfig> parseProfilesJson(String json) {
         List<BotConfig> list = new ArrayList<>();
-        if (!TextUtils.isEmpty(json)) {
+        if (!isBlank(json)) {
             try {
                 List<BotConfig> parsed = GSON.fromJson(json, LIST_TYPE);
                 if (parsed != null) {
@@ -147,6 +256,61 @@ public class BotConfig {
             } catch (Throwable ignored) {
             }
         }
+        return list;
+    }
+
+    public static String serializeFavoritesJson(List<FavoriteItem> items) {
+        List<FavoriteItem> clean = new ArrayList<>();
+        if (items != null) {
+            for (FavoriteItem it : items) {
+                if (it != null && !isBlank(it.url)) {
+                    String lbl = !isBlank(it.label) ? it.label.trim() : it.url.trim();
+                    clean.add(new FavoriteItem(lbl, it.url, it.service, it.isLive));
+                }
+            }
+        }
+        return GSON.toJson(clean, FAV_LIST_TYPE);
+    }
+
+    public static List<FavoriteItem> parseFavoritesJson(String json) {
+        List<FavoriteItem> list = new ArrayList<>();
+        if (!isBlank(json)) {
+            try {
+                List<FavoriteItem> parsed = GSON.fromJson(json, FAV_LIST_TYPE);
+                if (parsed != null) {
+                    for (FavoriteItem it : parsed) {
+                        if (it != null && !isBlank(it.url)) {
+                            list.add(new FavoriteItem(
+                                    !isBlank(it.label) ? it.label : it.url,
+                                    it.url,
+                                    it.service,
+                                    it.isLive));
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return list;
+    }
+
+    // --- SharedPreferences Persistence ---
+
+    /**
+     * Returns true if the user has already saved at least one DJ Bot profile
+     * (used to show the first-time upgrade notice after replacing TTMediaBot).
+     */
+    public static boolean hasSavedProfiles(Context context) {
+        if (context == null) return false;
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
+        String json = prefs.getString(PREF_BOT_PROFILES_JSON, "");
+        return !isBlank(json);
+    }
+
+    public static List<BotConfig> loadAll(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
+        String json = prefs.getString(PREF_BOT_PROFILES_JSON, "");
+        List<BotConfig> list = parseProfilesJson(json);
         if (list.isEmpty()) {
             list.add(createDefault());
         }
@@ -154,20 +318,8 @@ public class BotConfig {
     }
 
     public static void saveAll(Context context, List<BotConfig> profiles) {
-        List<BotConfig> clean = new ArrayList<>();
-        if (profiles != null) {
-            for (BotConfig c : profiles) {
-                if (c != null) {
-                    c.normalize();
-                    clean.add(c);
-                }
-            }
-        }
-        if (clean.isEmpty()) {
-            clean.add(createDefault());
-        }
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
-        prefs.edit().putString(PREF_BOT_PROFILES_JSON, GSON.toJson(clean)).apply();
+        prefs.edit().putString(PREF_BOT_PROFILES_JSON, serializeProfilesJson(profiles)).apply();
     }
 
     public static String getActiveId(Context context) {
@@ -183,7 +335,7 @@ public class BotConfig {
     public static BotConfig getActiveProfile(Context context) {
         List<BotConfig> all = loadAll(context);
         String activeId = getActiveId(context);
-        if (!TextUtils.isEmpty(activeId)) {
+        if (!isBlank(activeId)) {
             for (BotConfig c : all) {
                 if (activeId.equals(c.id)) {
                     return c;
@@ -215,7 +367,7 @@ public class BotConfig {
     }
 
     public static void deleteById(Context context, String id) {
-        if (TextUtils.isEmpty(id)) return;
+        if (isBlank(id)) return;
         List<BotConfig> all = loadAll(context);
         List<BotConfig> remaining = new ArrayList<>();
         for (BotConfig c : all) {
@@ -230,6 +382,18 @@ public class BotConfig {
         setActiveId(context, remaining.get(0).id);
     }
 
+    public static List<FavoriteItem> loadFavorites(Context context) {
+        if (context == null) return new ArrayList<>();
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
+        return parseFavoritesJson(prefs.getString(PREF_BOT_FAVORITES_JSON, ""));
+    }
+
+    public static void saveFavorites(Context context, List<FavoriteItem> items) {
+        if (context == null) return;
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context.getApplicationContext());
+        prefs.edit().putString(PREF_BOT_FAVORITES_JSON, serializeFavoritesJson(items)).apply();
+    }
+
     public static JsonArray toJsonArray(Context context) {
         List<BotConfig> all = loadAll(context);
         JsonElement el = GSON.toJsonTree(all, LIST_TYPE);
@@ -241,8 +405,7 @@ public class BotConfig {
             return 0;
         }
         List<BotConfig> existing = loadAll(context);
-        // Remove empty placeholder default profile if real profiles are imported
-        if (existing.size() == 1 && TextUtils.isEmpty(existing.get(0).host)) {
+        if (existing.size() == 1 && isBlank(existing.get(0).host)) {
             existing.clear();
         }
         int added = 0;
@@ -253,7 +416,7 @@ public class BotConfig {
                 BotConfig cfg = GSON.fromJson(obj, BotConfig.class);
                 if (cfg == null) continue;
                 cfg.normalize();
-                if (TextUtils.isEmpty(cfg.host)) continue;
+                if (isBlank(cfg.host)) continue;
 
                 boolean dup = false;
                 for (BotConfig ex : existing) {
