@@ -38,6 +38,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.teamtalkextro.data.MicrophoneInputHelper;
 import org.teamtalkextro.data.Preferences;
 import org.teamtalkextro.data.ScreenShareAudioHelper;
@@ -55,10 +57,11 @@ public final class ExperimentalAudioCapture {
     private float karaokeDuckGain = 1.0f;
 
     private TeamTalkService service;
-    private AudioRecord audioRecord;
-    private CaptureSession captureSession;
+    private volatile AudioRecord audioRecord;
+    private volatile CaptureSession captureSession;
     private Thread captureThread;
     private Config activeConfig;
+    private final AtomicInteger sessionGeneration = new AtomicInteger(0);
 
     private volatile boolean running = false;
     private volatile boolean active = false;
@@ -73,42 +76,75 @@ public final class ExperimentalAudioCapture {
     private final Runnable restartRunnable = new Runnable() {
         @Override
         public void run() {
+            final Config config;
+            final CaptureSession oldSession;
+            final Thread oldThread;
+            final int gen;
             synchronized (lock) {
-                if (running && activeConfig != null) {
-                    long now = SystemClock.uptimeMillis();
-                    if (now - lastRestartUptimeMs >= 500) {
-                        lastRestartUptimeMs = now;
-                        Log.i(TAG, "Restarting experimental audio capture...");
-                        Config config = activeConfig;
-                        CaptureSession oldSession = stopLocked(false);
-                        if (oldSession != null) {
-                            oldSession.stopAndRelease();
-                        }
-                        CaptureSession newSession = openSessionForConfig(config);
-                        if (newSession != null) {
-                            captureSession = newSession;
-                            audioRecord = newSession.audioRecord;
-                            running = true;
-                            active = true;
-                            activeChannels = newSession.channels;
-                            activeSampleRate = newSession.sampleRate;
-                            lastCaptureActivityUptimeMs = SystemClock.uptimeMillis();
-                            if (captureWakeLock != null && !captureWakeLock.isHeld()) {
-                                captureWakeLock.acquire();
-                            }
-                            VoiceChanger.resetState();
-                            MicEnhancement.resetState();
-                            MicrophoneEqualizer.resetState();
-                            Thread th = new Thread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    runCaptureLoop(captureSession);
-                                }
-                            }, "TT-ExperimentalCapture");
-                            captureThread = th;
-                            th.start();
+                if (!running || activeConfig == null) {
+                    return;
+                }
+                long now = SystemClock.uptimeMillis();
+                if (now - lastRestartUptimeMs < 500) {
+                    return;
+                }
+                lastRestartUptimeMs = now;
+                Log.i(TAG, "Restarting experimental audio capture...");
+                config = activeConfig;
+                gen = sessionGeneration.incrementAndGet();
+                oldSession = stopLocked(false);
+                oldThread = captureThread;
+                captureThread = null;
+            }
+
+            // Unblock AudioRecord.read(), wait for old capture thread to exit, then release native memory
+            if (oldSession != null) {
+                oldSession.stopRecordingOnly();
+            }
+            if (oldThread != null && oldThread != Thread.currentThread()) {
+                try {
+                    oldThread.join(400L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            if (oldSession != null) {
+                oldSession.releaseResources();
+            }
+
+            synchronized (lock) {
+                if (sessionGeneration.get() != gen || activeConfig == null) {
+                    return;
+                }
+                final CaptureSession newSession = openSessionForConfig(config);
+                if (newSession != null) {
+                    newSession.voxEnabled = config.voxEnabled;
+                    newSession.voxLevel = config.voxLevel;
+                    newSession.voxStopDelayMs = config.voxStopDelayMs;
+                    captureSession = newSession;
+                    audioRecord = newSession.audioRecord;
+                    running = true;
+                    active = true;
+                    activeChannels = newSession.channels;
+                    activeSampleRate = newSession.sampleRate;
+                    lastCaptureActivityUptimeMs = SystemClock.uptimeMillis();
+                    if (captureWakeLock != null && !captureWakeLock.isHeld()) {
+                        try {
+                            captureWakeLock.acquire();
+                        } catch (Throwable ignored) {
                         }
                     }
+                    VoiceChanger.resetState();
+                    MicEnhancement.resetState();
+                    MicrophoneEqualizer.resetState();
+                    Thread th = new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            runCaptureLoop(newSession);
+                        }
+                    }, "TT-ExperimentalCapture");
+                    captureThread = th;
+                    th.start();
                 }
             }
         }
@@ -199,6 +235,8 @@ public final class ExperimentalAudioCapture {
         volatile int voxStopDelayMs = 500;
         volatile boolean voiceTransmitting;
         volatile boolean silencedByPolicy = false;
+        volatile boolean released = false;
+        private final AtomicBoolean resourcesReleased = new AtomicBoolean(false);
 
         public CaptureSession(AudioRecord audioRecord, AudioRecord internalAudioRecord, int sampleRate,
                               int channels, int frameSamples, int streamId, float gainMultiplier,
@@ -214,8 +252,12 @@ public final class ExperimentalAudioCapture {
             this.preprocessors = preprocessors;
         }
 
+        public boolean isReleased() {
+            return this.released;
+        }
+
         public void applyPreprocessorsConfig(boolean enable) {
-            if (preprocessors != null) {
+            if (preprocessors != null && !this.released) {
                 if (enable && this.channels == 1) {
                     preprocessors.enable();
                 } else {
@@ -228,7 +270,12 @@ public final class ExperimentalAudioCapture {
             return !this.voxEnabled || this.voiceTransmitting;
         }
 
-        public void stopAndRelease() {
+        /**
+         * Stops AudioRecord streams to unblock any pending read() without freeing
+         * native memory yet. Call {@link #releaseResources()} after joining the thread.
+         */
+        public void stopRecordingOnly() {
+            this.released = true;
             if (recordingCallback != null && Build.VERSION.SDK_INT >= 29 && audioRecord != null) {
                 try {
                     audioRecord.unregisterAudioRecordingCallback(recordingCallback);
@@ -236,16 +283,9 @@ public final class ExperimentalAudioCapture {
                 }
                 recordingCallback = null;
             }
-            if (preprocessors != null) {
-                preprocessors.release();
-            }
             if (audioRecord != null) {
                 try {
                     audioRecord.stop();
-                } catch (Throwable ignored) {
-                }
-                try {
-                    audioRecord.release();
                 } catch (Throwable ignored) {
                 }
             }
@@ -254,11 +294,37 @@ public final class ExperimentalAudioCapture {
                     internalAudioRecord.stop();
                 } catch (Throwable ignored) {
                 }
+            }
+        }
+
+        public void releaseResources() {
+            this.released = true;
+            if (!resourcesReleased.compareAndSet(false, true)) {
+                return;
+            }
+            if (preprocessors != null) {
+                try {
+                    preprocessors.release();
+                } catch (Throwable ignored) {
+                }
+            }
+            if (audioRecord != null) {
+                try {
+                    audioRecord.release();
+                } catch (Throwable ignored) {
+                }
+            }
+            if (internalAudioRecord != null) {
                 try {
                     internalAudioRecord.release();
                 } catch (Throwable ignored) {
                 }
             }
+        }
+
+        public void stopAndRelease() {
+            stopRecordingOnly();
+            releaseResources();
         }
 
         public void release() {
@@ -268,8 +334,8 @@ public final class ExperimentalAudioCapture {
 
     public ExperimentalAudioCapture(Context context) {
         this.context = context;
-        this.audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-        PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        this.audioManager = context != null ? (AudioManager) context.getSystemService(Context.AUDIO_SERVICE) : null;
+        PowerManager pm = context != null ? (PowerManager) context.getSystemService(Context.POWER_SERVICE) : null;
         this.captureWakeLock = pm != null ? pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TeamTalk:ExperimentalAudioCapture") : null;
         if (this.captureWakeLock != null) {
             this.captureWakeLock.setReferenceCounted(false);
@@ -407,24 +473,30 @@ public final class ExperimentalAudioCapture {
     }
 
     public boolean start(TeamTalkBase client, Config config) {
+        if (config == null) {
+            return false;
+        }
         synchronized (this.lock) {
             if (client != null) {
                 this.ttclients.add(client);
             }
             this.activeConfig = config;
             if (this.running) {
-                if (this.captureSession != null) {
-                    this.captureSession.voxEnabled = config.voxEnabled;
-                    this.captureSession.voxLevel = config.voxLevel;
-                    this.captureSession.voxStopDelayMs = config.voxStopDelayMs;
-                    if (config.voxEnabled || this.captureSession.audioSource == 7) {
-                        this.captureSession.applyPreprocessorsConfig(true);
+                CaptureSession existing = this.captureSession;
+                if (existing != null && !existing.isReleased()) {
+                    existing.voxEnabled = config.voxEnabled;
+                    existing.voxLevel = config.voxLevel;
+                    existing.voxStopDelayMs = config.voxStopDelayMs;
+                    if (config.voxEnabled || existing.audioSource == 7) {
+                        existing.applyPreprocessorsConfig(true);
                     }
+                    return true;
                 }
-                return true;
+                this.running = false;
             }
             syncMicEnhancementFromPreferences();
-            CaptureSession session = openSessionForConfig(config);
+            this.sessionGeneration.incrementAndGet();
+            final CaptureSession session = openSessionForConfig(config);
             if (session == null) {
                 if (client != null) {
                     this.ttclients.remove(client);
@@ -443,7 +515,10 @@ public final class ExperimentalAudioCapture {
             this.activeSampleRate = session.sampleRate;
             this.lastCaptureActivityUptimeMs = SystemClock.uptimeMillis();
             if (this.captureWakeLock != null && !this.captureWakeLock.isHeld()) {
-                this.captureWakeLock.acquire();
+                try {
+                    this.captureWakeLock.acquire();
+                } catch (Throwable ignored) {
+                }
             }
             VoiceChanger.resetState();
             MicEnhancement.resetState();
@@ -451,7 +526,7 @@ public final class ExperimentalAudioCapture {
             Thread th = new Thread(new Runnable() {
                 @Override
                 public void run() {
-                    runCaptureLoop(captureSession);
+                    runCaptureLoop(session);
                 }
             }, "TT-ExperimentalCapture");
             this.captureThread = th;
@@ -468,20 +543,26 @@ public final class ExperimentalAudioCapture {
                 this.ttclients.remove(client);
             }
             if (this.ttclients.isEmpty() || releaseClient) {
+                this.sessionGeneration.incrementAndGet();
                 sessionToRelease = stopLocked(releaseClient);
                 threadToJoin = this.captureThread;
                 this.captureThread = null;
                 this.activeConfig = null;
             }
         }
+        // Stop recording first to unblock read(), join thread, then free native AudioRecord
         if (sessionToRelease != null) {
-            sessionToRelease.stopAndRelease();
+            sessionToRelease.stopRecordingOnly();
         }
         if (threadToJoin != null && threadToJoin != Thread.currentThread()) {
             try {
-                threadToJoin.join(300L);
+                threadToJoin.join(400L);
             } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
             }
+        }
+        if (sessionToRelease != null) {
+            sessionToRelease.releaseResources();
         }
     }
 
@@ -584,12 +665,18 @@ public final class ExperimentalAudioCapture {
     }
 
     private void mixInternalAudio(CaptureSession session, byte[] micBuf, byte[] internalBuf, int length, float internalGain, int mode) {
-        if (session.internalAudioRecord == null || !this.running) {
+        if (session == null || session.internalAudioRecord == null || !this.running || session.isReleased()) {
             return;
         }
         int readTotal = 0;
-        while (this.running && readTotal < length) {
-            int read = session.internalAudioRecord.read(internalBuf, readTotal, length - readTotal);
+        while (this.running && !session.isReleased() && readTotal < length) {
+            int read;
+            try {
+                read = session.internalAudioRecord.read(internalBuf, readTotal, length - readTotal);
+            } catch (Throwable t) {
+                Log.w(TAG, "Internal audio read error: " + t.getMessage());
+                break;
+            }
             if (read <= 0) break;
             readTotal += read;
         }
@@ -661,168 +748,201 @@ public final class ExperimentalAudioCapture {
         }
     }
 
-    private void runCaptureLoop(CaptureSession session) {
+    void runCaptureLoop(CaptureSession session) {
+        if (session == null || session.audioRecord == null || session.frameSamples <= 0 || session.channels <= 0) {
+            return;
+        }
+        if (!this.running || this.captureSession != session || session.isReleased()) {
+            return;
+        }
         try {
             Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
         } catch (Throwable t) {
             Log.w(TAG, "Failed to set audio thread priority", t);
         }
 
-        int frameBytes = session.frameSamples * session.channels * 2;
-        byte[] micBuffer = new byte[frameBytes];
-        byte[] internalBuffer = new byte[frameBytes];
-        byte[] karaokeBuffer = new byte[frameBytes];
-        AudioBlock block = new AudioBlock();
-
-        float internalGain = 0.3f;
-        try {
-            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this.context);
-            int gainInt = prefs.getInt("internal_audio_gain_seekbar", 30);
-            float norm = gainInt / 100.0f;
-            internalGain = norm * norm;
-        } catch (Exception ignored) {
-        }
-
-        byte[][] ringBuffer = (byte[][]) Array.newInstance(Byte.TYPE, 2, frameBytes);
-        int ringWriteIdx = 0;
-        int ringCount = 0;
-        int sampleIndex = 0;
         boolean transmitting = false;
-        long lastVoiceActivityTime = SystemClock.uptimeMillis();
-        long silenceStartTime = 0;
+        try {
+            int frameBytes = session.frameSamples * session.channels * 2;
+            if (frameBytes <= 0) {
+                return;
+            }
+            byte[] micBuffer = new byte[frameBytes];
+            byte[] internalBuffer = new byte[frameBytes];
+            byte[] karaokeBuffer = new byte[frameBytes];
+            AudioBlock block = new AudioBlock();
 
-        while (this.running) {
-            if (session.silencedByPolicy) {
-                if (transmitting) {
-                    transmitting = false;
-                    session.voiceTransmitting = false;
-                    flushEmptyAudioBlock();
-                    notifyVoiceActivation(false);
+            float internalGain = 0.3f;
+            try {
+                if (this.context != null) {
+                    SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this.context);
+                    int gainInt = prefs.getInt("internal_audio_gain_seekbar", 30);
+                    float norm = gainInt / 100.0f;
+                    internalGain = norm * norm;
                 }
-                SystemClock.sleep(50L);
-                continue;
+            } catch (Throwable ignored) {
             }
 
-            int bytesRead = 0;
-            int micReadAttempts = 0;
-            while (this.running && bytesRead < frameBytes) {
-                int read = session.audioRecord.read(micBuffer, bytesRead, frameBytes - bytesRead);
-                if (read > 0) {
-                    bytesRead += read;
-                    this.lastCaptureActivityUptimeMs = SystemClock.uptimeMillis();
-                    micReadAttempts = 0;
-                } else if (read < 0) {
-                    if (session.silencedByPolicy) {
-                        micReadAttempts = 0;
-                        SystemClock.sleep(50L);
-                        continue;
+            byte[][] ringBuffer = (byte[][]) Array.newInstance(Byte.TYPE, 2, frameBytes);
+            int ringWriteIdx = 0;
+            int ringCount = 0;
+            int sampleIndex = 0;
+            long lastVoiceActivityTime = SystemClock.uptimeMillis();
+            long silenceStartTime = 0;
+
+            while (this.running && this.captureSession == session && !session.isReleased()) {
+                if (session.silencedByPolicy) {
+                    if (transmitting) {
+                        transmitting = false;
+                        session.voiceTransmitting = false;
+                        flushEmptyAudioBlock();
+                        notifyVoiceActivation(false);
                     }
-                    micReadAttempts++;
-                    Log.w(TAG, "Experimental capture mic read error: " + read + ", attempt " + micReadAttempts);
-                    if (micReadAttempts >= 25) {
-                        Log.e(TAG, "Persistent read error. Scheduling restart.");
-                        scheduleRestart();
-                        if (transmitting) {
-                            session.voiceTransmitting = false;
-                            flushEmptyAudioBlock();
-                            notifyVoiceActivation(false);
+                    SystemClock.sleep(50L);
+                    continue;
+                }
+
+                int bytesRead = 0;
+                int micReadAttempts = 0;
+                while (this.running && this.captureSession == session && !session.isReleased() && bytesRead < frameBytes) {
+                    int read;
+                    try {
+                        read = session.audioRecord.read(micBuffer, bytesRead, frameBytes - bytesRead);
+                    } catch (Throwable t) {
+                        if (!this.running || this.captureSession != session || session.isReleased()) {
+                            return;
                         }
-                        return;
+                        Log.w(TAG, "Experimental capture AudioRecord.read threw: " + t.getMessage());
+                        read = AudioRecord.ERROR_INVALID_OPERATION;
                     }
-                    SystemClock.sleep(25L);
-                } else {
-                    SystemClock.sleep(20L);
+                    if (read > 0) {
+                        bytesRead += read;
+                        this.lastCaptureActivityUptimeMs = SystemClock.uptimeMillis();
+                        micReadAttempts = 0;
+                    } else if (read < 0) {
+                        if (!this.running || this.captureSession != session || session.isReleased()) {
+                            return;
+                        }
+                        if (session.silencedByPolicy) {
+                            micReadAttempts = 0;
+                            SystemClock.sleep(50L);
+                            continue;
+                        }
+                        micReadAttempts++;
+                        Log.w(TAG, "Experimental capture mic read error: " + read + ", attempt " + micReadAttempts);
+                        if (micReadAttempts >= 25) {
+                            Log.e(TAG, "Persistent read error. Scheduling restart.");
+                            scheduleRestart();
+                            return;
+                        }
+                        SystemClock.sleep(25L);
+                    } else {
+                        SystemClock.sleep(20L);
+                    }
                 }
-            }
 
-            if (!this.running) break;
+                if (!this.running || this.captureSession != session || session.isReleased()) break;
 
-            long now = SystemClock.uptimeMillis();
-            int screenMode = getEffectiveScreenShareAudioMode(session);
-            boolean isStreamingOrSharing = (this.service != null && (this.service.isScreenSharingActive() || this.service.isStreamingMedia()));
-            boolean karaokeActive = isKaraokeActive();
-            boolean soundboardActive = isSoundboardActive();
+                long now = SystemClock.uptimeMillis();
+                int screenMode = getEffectiveScreenShareAudioMode(session);
+                boolean isStreamingOrSharing = (this.service != null && (this.service.isScreenSharingActive() || this.service.isStreamingMedia()));
+                boolean karaokeActive = isKaraokeActive();
+                boolean soundboardActive = isSoundboardActive();
 
-            if (session.voxEnabled && screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY && !isStreamingOrSharing && !karaokeActive && !soundboardActive) {
-                int energy = computeEnergyLevel(micBuffer, frameBytes);
-                if (energy >= session.voxLevel) {
+                if (session.voxEnabled && screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY && !isStreamingOrSharing && !karaokeActive && !soundboardActive) {
+                    int energy = computeEnergyLevel(micBuffer, frameBytes);
+                    if (energy >= session.voxLevel) {
+                        if (!transmitting) {
+                            transmitting = true;
+                            session.voiceTransmitting = true;
+                            notifyVoiceActivation(true);
+
+                            if (ringCount > 0) {
+                                int startIdx = ringCount >= 2 ? ringWriteIdx : 0;
+                                for (int r = 0; r < ringCount; r++) {
+                                    byte[] preBuf = ringBuffer[(startIdx + r) % 2];
+                                    if (this.micEnhancementEnabled) {
+                                        MicEnhancement.process(preBuf, 0, frameBytes, session.sampleRate, session.channels);
+                                    }
+                                    MicrophoneEqualizer.process(preBuf, 0, frameBytes, session.sampleRate, session.channels);
+                                    VoiceChanger.process(preBuf, 0, frameBytes, session.sampleRate, session.channels);
+                                    applyGain(preBuf, session.gainMultiplier);
+
+                                    block.nStreamID = session.streamId;
+                                    block.uStreamTypes = 1;
+                                    block.nSampleRate = session.sampleRate;
+                                    block.nChannels = session.channels;
+                                    block.nSamples = session.frameSamples;
+                                    block.uSampleIndex = sampleIndex;
+                                    block.lpRawAudio = preBuf;
+                                    insertBlockToClients(block);
+                                    sampleIndex += session.frameSamples;
+                                }
+                                ringCount = 0;
+                            }
+                            lastVoiceActivityTime = now;
+                            silenceStartTime = now;
+                        } else {
+                            silenceStartTime = now;
+                        }
+                    } else {
+                        if (transmitting) {
+                            if (now - silenceStartTime > session.voxStopDelayMs) {
+                                transmitting = false;
+                                session.voiceTransmitting = false;
+                                flushEmptyAudioBlock();
+                                notifyVoiceActivation(false);
+                                lastVoiceActivityTime = now;
+                            }
+                        }
+                    }
+                } else {
                     if (!transmitting) {
                         transmitting = true;
                         session.voiceTransmitting = true;
-                        notifyVoiceActivation(true);
-
-                        if (ringCount > 0) {
-                            int startIdx = ringCount >= 2 ? ringWriteIdx : 0;
-                            for (int r = 0; r < ringCount; r++) {
-                                byte[] preBuf = ringBuffer[(startIdx + r) % 2];
-                                if (this.micEnhancementEnabled) {
-                                    MicEnhancement.process(preBuf, 0, frameBytes, session.sampleRate, session.channels);
-                                }
-                                MicrophoneEqualizer.process(preBuf, 0, frameBytes, session.sampleRate, session.channels);
-                                VoiceChanger.process(preBuf, 0, frameBytes, session.sampleRate, session.channels);
-                                applyGain(preBuf, session.gainMultiplier);
-
-                                block.nStreamID = session.streamId;
-                                block.uStreamTypes = 1;
-                                block.nSampleRate = session.sampleRate;
-                                block.nChannels = session.channels;
-                                block.nSamples = session.frameSamples;
-                                block.uSampleIndex = sampleIndex;
-                                block.lpRawAudio = preBuf;
-                                insertBlockToClients(block);
-                                sampleIndex += session.frameSamples;
-                            }
-                            ringCount = 0;
-                        }
-                        lastVoiceActivityTime = now;
-                        silenceStartTime = now;
-                    } else {
-                        silenceStartTime = now;
-                    }
-                } else {
-                    if (transmitting) {
-                        if (now - silenceStartTime > session.voxStopDelayMs) {
-                            transmitting = false;
-                            session.voiceTransmitting = false;
-                            flushEmptyAudioBlock();
-                            notifyVoiceActivation(false);
-                            lastVoiceActivityTime = now;
-                        }
                     }
                 }
-            } else {
+
                 if (!transmitting) {
-                    transmitting = true;
-                    session.voiceTransmitting = true;
+                    System.arraycopy(micBuffer, 0, ringBuffer[ringWriteIdx], 0, frameBytes);
+                    ringWriteIdx = (ringWriteIdx + 1) % 2;
+                    if (ringCount < 2) ringCount++;
+                } else {
+                    if (screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY) {
+                        if (this.micEnhancementEnabled) {
+                            MicEnhancement.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
+                        }
+                        MicrophoneEqualizer.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
+                        VoiceChanger.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
+                        applyGain(micBuffer, session.gainMultiplier);
+                    }
+                    mixInternalAudio(session, micBuffer, internalBuffer, frameBytes, internalGain, screenMode);
+                    mixKaraoke(micBuffer, karaokeBuffer, frameBytes);
+                    mixSoundboard(micBuffer, frameBytes);
+
+                    block.nStreamID = session.streamId;
+                    block.uStreamTypes = 1;
+                    block.nSampleRate = session.sampleRate;
+                    block.nChannels = session.channels;
+                    block.nSamples = session.frameSamples;
+                    block.uSampleIndex = sampleIndex;
+                    block.lpRawAudio = micBuffer;
+                    insertBlockToClients(block);
+                    sampleIndex += session.frameSamples;
                 }
             }
-
-            if (!transmitting) {
-                System.arraycopy(micBuffer, 0, ringBuffer[ringWriteIdx], 0, frameBytes);
-                ringWriteIdx = (ringWriteIdx + 1) % 2;
-                if (ringCount < 2) ringCount++;
-            } else {
-                if (screenMode != ScreenShareAudioHelper.MODE_SCREEN_ONLY) {
-                    if (this.micEnhancementEnabled) {
-                        MicEnhancement.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
-                    }
-                    MicrophoneEqualizer.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
-                    VoiceChanger.process(micBuffer, 0, frameBytes, session.sampleRate, session.channels);
-                    applyGain(micBuffer, session.gainMultiplier);
+        } catch (Throwable t) {
+            Log.e(TAG, "Experimental capture loop unexpected error", t);
+            if (this.running && this.captureSession == session && !session.isReleased()) {
+                scheduleRestart();
+            }
+        } finally {
+            if (transmitting) {
+                session.voiceTransmitting = false;
+                if (this.captureSession == session || !this.running) {
+                    flushEmptyAudioBlock();
+                    notifyVoiceActivation(false);
                 }
-                mixInternalAudio(session, micBuffer, internalBuffer, frameBytes, internalGain, screenMode);
-                mixKaraoke(micBuffer, karaokeBuffer, frameBytes);
-                mixSoundboard(micBuffer, frameBytes);
-
-                block.nStreamID = session.streamId;
-                block.uStreamTypes = 1;
-                block.nSampleRate = session.sampleRate;
-                block.nChannels = session.channels;
-                block.nSamples = session.frameSamples;
-                block.uSampleIndex = sampleIndex;
-                block.lpRawAudio = micBuffer;
-                insertBlockToClients(block);
-                sampleIndex += session.frameSamples;
             }
         }
     }
@@ -918,7 +1038,7 @@ public final class ExperimentalAudioCapture {
     @SuppressLint({"MissingPermission", "NewApi"})
     private CaptureSession buildCaptureSession(Config config, AudioDeviceInfo preferredDevice, int sampleRate, int audioSource, int channelMask) {
         int channels = (channelMask == AudioFormat.CHANNEL_IN_STEREO) ? 2 : 1;
-        int frameSamples = (sampleRate * Math.max(20, config.frameDurationMs)) / 1000;
+        int frameSamples = Math.max(160, (sampleRate * Math.max(20, config.frameDurationMs)) / 1000);
         int frameBytes = frameSamples * channels * 2;
         int minBuf = AudioRecord.getMinBufferSize(sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT);
         if (minBuf < frameBytes * 2) {
@@ -980,8 +1100,12 @@ public final class ExperimentalAudioCapture {
         }
 
         PlatformPreprocessors preprocessors = attachPlatformPreprocessors(micRecord.getAudioSessionId());
-        return new CaptureSession(micRecord, internalRecord, sampleRate, channels, frameSamples,
+        CaptureSession built = new CaptureSession(micRecord, internalRecord, sampleRate, channels, frameSamples,
                 config.streamId, config.gainMultiplier, audioSource, preprocessors);
+        built.voxEnabled = config.voxEnabled;
+        built.voxLevel = config.voxLevel;
+        built.voxStopDelayMs = config.voxStopDelayMs;
+        return built;
     }
 
     private PlatformPreprocessors attachPlatformPreprocessors(int sessionId) {
@@ -1013,13 +1137,14 @@ public final class ExperimentalAudioCapture {
                 return false;
             }
             if (Build.VERSION.SDK_INT >= 29) {
+                final int audioSessionId = session.audioRecord.getAudioSessionId();
                 AudioManager.AudioRecordingCallback callback = new AudioManager.AudioRecordingCallback() {
                     private boolean wasSilenced = false;
                     @Override
                     public void onRecordingConfigChanged(List<AudioRecordingConfiguration> configs) {
-                        if (configs != null && running && session == captureSession) {
+                        if (configs != null && running && session == captureSession && !session.isReleased()) {
                             for (AudioRecordingConfiguration cfg : configs) {
-                                if (cfg != null && cfg.getClientAudioSessionId() == session.audioRecord.getAudioSessionId()) {
+                                if (cfg != null && cfg.getClientAudioSessionId() == audioSessionId) {
                                     if (cfg.isClientSilenced()) {
                                         session.silencedByPolicy = true;
                                         if (!wasSilenced) {

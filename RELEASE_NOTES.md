@@ -1,3 +1,12 @@
+## TeamTalk Extro Android v5.36.1 — Полное устранение вылета `TT-ExperimentalCapture` (NullPointerException / AudioRecord race)
+
+### 🛠️ Исправление стабильности аудиозахвата
+- **Устранён редкий вылет `NullPointerException` в потоке `TT-ExperimentalCapture` (`ExperimentalAudioCapture.runCaptureLoop`):** ранее новый поток захвата читал изменяемое поле `this.captureSession`, которое могло быть обнулено быстрым `stop()` или автоперезапуском микрофона до старта потока. Теперь поток привязан к неизменяемой локальной ссылке `session` (`volatile captureSession` + проверка владельца сессии и `session.isReleased()`).
+- **Безопасный порядок остановки и перезапуска `AudioRecord` (Android 14 / Realme / ColorOS):** при остановке и перезапуске сначала выполняется `stopRecordingOnly()` для мгновенного выхода из `AudioRecord.read()`, затем ожидание завершения потока (`join(400ms)`), и только после этого вызывается идемпотентный `releaseResources()`.
+- **Защита от сбоев AudioHAL и сохранение VOX при перезапуске:** чтение микрофона и внутреннего звука обернуто в защиту от исключений, `audioSessionId` кэшируется для `AudioRecordingCallback`, а параметры VOX корректно переносятся при автоперезапуске.
+
+---
+
 ## TeamTalk Extro Android v5.36.0 — Полноценный звук Радио/Волнореза, ТВ с видео и звуком, Яндекс.Музыка, Telegram-бот и оптимизация под планшеты
 
 ### 🔊 Коренное исправление звука Радио / Волнореза и ТВ (Видео + Звук!)
